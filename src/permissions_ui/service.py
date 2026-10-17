@@ -358,8 +358,8 @@ class Portal:
     # ── Merging ───────────────────────────────────────────────────────────────────────
 
     async def _finalise(self, req: rq.Request, actor: Actor) -> None:
-        """Rebuild the request's branch on the latest catalog, then merge it and, in the `graph`
-        mode, change the groups."""
+        """Rebuild the request's branch on the latest catalog, then merge exactly that commit and,
+        in the `graph` mode, change the groups."""
         github = self._repo()
         pull = await github.pull(req.number, with_comments=False)
         catalog = await self.catalog()
@@ -376,16 +376,15 @@ class Portal:
             everything = bool(self._records.read(pull.body, "request", req.number)[-1].get("everything"))
             changed = rq.remove_grants(current, None if everything else items) if current else None
         content = dump_person(changed) if changed else None
-        await github.commit(pull.head, {person_file(req.person): content}, f"{pull.title} (#{req.number})", replace=True)
+        built = await github.commit(pull.head, {person_file(req.person): content}, f"{pull.title} (#{req.number})", replace=True)
         await github.label(req.number, ["access:approved"], ("access:pending",))
         if not self._auto_merge:
             await github.comment(req.number, "Approved. This repository merges access requests by hand.")
             return
 
-        head = (await github.pull(req.number, with_comments=False)).head_sha
         approvers = ", ".join(a.upn for a in req.approvals) or actor.upn
-        await github.approve(req.number, f"Approved in permissions-ui by {approvers}.")
-        if not await github.merge(req.number, head, f"{pull.title} (#{req.number})"):
+        await github.approve(req.number, built, f"Approved in permissions-ui by {approvers}.")
+        if not await github.merge(req.number, built, f"{pull.title} (#{req.number})"):
             await github.comment(req.number, "Approved, but the branch rules still hold this back. It merges once they allow it.")
             return
         manual = [rid for rid in catalog.resources_of(items) if rid in catalog.resources and catalog.resources[rid].kind == "manual"]

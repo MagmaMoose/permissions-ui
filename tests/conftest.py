@@ -196,6 +196,11 @@ class FakeGitHub:
     comments: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     next_number: int = 100
     block_merge: bool = False
+    # Merges refused (405) after each force update while the pull request catches up with its branch.
+    lag: int = 0
+    # Files someone else force-pushes onto a request branch, on main, right after each force update.
+    intruder: dict[str, str] | None = None
+    reviews: list[dict[str, Any]] = field(default_factory=list)
 
     def seed(self, files: dict[str, str]) -> None:
         tree = {}
@@ -212,6 +217,18 @@ class FakeGitHub:
     def files(self, ref: str = "main") -> dict[str, str]:
         tree = self.trees[self.commits[self.refs[ref]]["tree"]]
         return {p: self.blobs[s] for p, s in tree.items()}
+
+    def push(self, parent: str, files: dict[str, str]) -> str:
+        """A commit on `parent` with `files` written, the way a person pushing by hand makes one."""
+        tree = dict(self.trees[self.commits[parent]["tree"]])
+        for path, text in files.items():
+            tree[path] = _sha("blob", text)
+            self.blobs[tree[path]] = text
+        tree_sha = _sha("tree", tree)
+        self.trees[tree_sha] = tree
+        sha = _sha("commit", tree_sha, [parent], time.time_ns())
+        self.commits[sha] = {"tree": tree_sha, "parents": [parent], "message": "pushed by hand"}
+        return sha
 
     def _pull_json(self, n: int) -> dict[str, Any]:
         p = self.pulls[n]
@@ -275,7 +292,10 @@ class FakeGitHub:
             self.refs[name] = body["sha"]
             return httpx.Response(201, json={"ref": body["ref"]})
         if method == "PATCH" and (m := re.fullmatch(r"/git/refs/heads/(.+)", path)):
-            self.refs[m.group(1)] = body["sha"]
+            self.refs[m.group(1)] = self.push(self.refs["main"], self.intruder) if self.intruder else body["sha"]
+            for p in self.pulls.values():
+                if p["head"] == m.group(1):
+                    p["lag"] = self.lag
             return httpx.Response(200, json={})
         if method == "POST" and path == "/pulls":
             n = self.next_number
@@ -301,7 +321,8 @@ class FakeGitHub:
             if method == "POST":
                 self.comments[n].append({"id": len(self.comments[n]) + 1, "user": {"login": body.get("_as", BOT)}, "body": body["body"], "created_at": "2026-10-17T09:30:00Z"})
                 return httpx.Response(201, json={})
-            return httpx.Response(200, json=self.comments[n])
+            per_page, page = int(query.get("per_page", 30)), int(query.get("page", 1))
+            return httpx.Response(200, json=self.comments[n][(page - 1) * per_page : page * per_page])
         if method == "POST" and (m := re.fullmatch(r"/issues/(\d+)/labels", path)):
             self.pulls[int(m.group(1))]["labels"] |= set(body["labels"])
             return httpx.Response(200, json=[])
@@ -311,12 +332,16 @@ class FakeGitHub:
                 return httpx.Response(404, json={"message": "Label does not exist"})
             labels.discard(m.group(2))
             return httpx.Response(200, json=[])
-        if method == "POST" and re.fullmatch(r"/pulls/(\d+)/reviews", path):
+        if method == "POST" and (m := re.fullmatch(r"/pulls/(\d+)/reviews", path)):
+            self.reviews.append({"number": int(m.group(1)), **body})
             return httpx.Response(200, json={})
         if method == "PUT" and (m := re.fullmatch(r"/pulls/(\d+)/merge", path)):
             n = int(m.group(1))
             pull = self.pulls[n]
             head = self.refs[pull["head"]]
+            if pull.get("lag"):
+                pull["lag"] -= 1
+                return httpx.Response(405, json={"message": "Pull Request is not mergeable"})
             if self.block_merge:
                 return httpx.Response(405, json={"message": "Required status check is expected"})
             if body["sha"] != head or self.commits[head]["parents"] != [self.refs["main"]]:
@@ -354,6 +379,12 @@ class World:
 
 def example_files(root: str = "access") -> dict[str, str]:
     return {f"{root}/{p.relative_to(EXAMPLE)}": p.read_text() for p in sorted(EXAMPLE.rglob("*.yaml"))}
+
+
+@pytest.fixture(autouse=True)
+def no_catch_up_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake's catch-up after a force update is `lag`, counted in merges rather than seconds."""
+    monkeypatch.setattr("permissions_ui.github.CATCH_UP_SECONDS", 0)
 
 
 @pytest.fixture
