@@ -25,7 +25,7 @@ from urllib.parse import quote
 import httpx
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-_USER_FIELDS = "id,displayName,userPrincipalName,mail,accountEnabled,jobTitle,department"
+_USER_FIELDS = "id,displayName,givenName,surname,userPrincipalName,mail,accountEnabled,jobTitle,department"
 _GROUP_FIELDS = "id,displayName,description"
 
 
@@ -33,6 +33,15 @@ class DirectoryError(Exception):
     def __init__(self, message: str, *, status: int = 502):
         super().__init__(message)
         self.status = status
+
+
+def person_name(display: str, given: str, surname: str) -> str:
+    """The display name up to the surname: directories often append an organisation
+    ("Jane Doe - Contoso"). A display name that does not start with the given name stays whole."""
+    if not (given and surname and display.lower().startswith(given.lower())):
+        return display
+    at = display.lower().find(surname.lower(), len(given))
+    return display[: at + len(surname)] if at >= 0 else display
 
 
 @dataclass(frozen=True)
@@ -49,7 +58,7 @@ class User:
     def parse(cls, data: dict[str, Any]) -> User:
         return cls(
             id=str(data.get("id", "")).lower(),
-            name=str(data.get("displayName") or ""),
+            name=person_name(str(data.get("displayName") or ""), str(data.get("givenName") or ""), str(data.get("surname") or "")),
             upn=str(data.get("userPrincipalName") or "").lower(),
             mail=str(data.get("mail") or "").lower(),
             enabled=bool(data.get("accountEnabled", True)),

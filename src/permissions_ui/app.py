@@ -411,6 +411,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
         if user is None or not user.upn:
             return _back(auth_error="That account is not in the directory.")
         data["upn"] = user.upn
+        data["name"] = user.name or signed.name
         response = _back()
         cookies.write_session(request, response, data, cfg.session_seconds)
         _log("signed in", user=signed.oid, roles=signed.roles)
