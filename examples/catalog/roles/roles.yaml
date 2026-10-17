@@ -1,0 +1,16 @@
+- id: payments-developer
+  name: Payments developer
+  description: Everything a developer on the payments team needs on day one.
+  resources: [k8s-acc-payments-write, k8s-prd-payments-read, grafana-viewer, payments-keyvault-acc, github-payments, vpn]
+  approvers: [team:payments]
+  max_days: 365
+- id: platform-engineer
+  name: Platform engineer
+  description: Day-to-day platform work; cluster-admin is requested on its own, when needed.
+  resources: [k8s-prd-payments-read, grafana-viewer, vpn]
+  approvers: [team:platform]
+- id: qa-tester
+  name: QA tester
+  description: Reads the clusters and approves production releases.
+  resources: [k8s-prd-payments-read, grafana-viewer, prd-release-approver]
+  approvers: [team:qa]

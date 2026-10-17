@@ -1,0 +1,36 @@
+apiVersion: v2
+name: permissions-ui
+description: See and manage who has access to what. People ask for access, the right person approves, every grant is a pull request in your catalog repository, and Entra ID enforces it.
+type: application
+
+# version is the CHART version and appVersion the application version. The release
+# workflow publishes the chart at the release version with appVersion set to the release
+# tag, so these two are only what a local `helm install ./charts/permissions-ui` uses.
+# appVersion is the default image tag and keeps the leading "v" the image tags carry.
+version: 0.1.0
+appVersion: "v0.1.0"
+
+home: https://github.com/MagmaMoose/permissions-ui
+sources:
+  - https://github.com/MagmaMoose/permissions-ui
+keywords:
+  - access-management
+  - entra-id
+  - microsoft-graph
+  - gitops
+  - approvals
+  - workload-identity
+maintainers:
+  - name: Caleb Sargeant
+    url: https://github.com/CalebSargeant
+
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: security
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/links: |
+    - name: Source
+      url: https://github.com/MagmaMoose/permissions-ui
+  artifacthub.io/changes: |
+    - kind: added
+      description: First release.

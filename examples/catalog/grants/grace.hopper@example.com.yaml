@@ -1,0 +1,12 @@
+person: grace.hopper@example.com
+grants:
+- role: platform-engineer
+  reason: Platform team lead
+  approved_by: [linus.pauling@example.com]
+  granted: '2026-06-01'
+- resource: k8s-prd-cluster-admin
+  reason: On call this month
+  approved_by: [linus.pauling@example.com, margaret.hamilton@example.com]
+  granted: '2026-10-05'
+  expires: '2026-11-04'
+  request: 12

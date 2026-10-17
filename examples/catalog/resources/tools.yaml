@@ -1,0 +1,35 @@
+- id: grafana-viewer
+  name: Grafana, viewer
+  description: Read every dashboard and log in Grafana.
+  owner: platform
+  kind: entra-group
+  target: grafana-viewer
+- id: payments-keyvault-acc
+  name: Key Vault payments-acc
+  description: Read and change the payments team's secrets on acc.
+  owner: payments
+  kind: entra-group
+  target: payments-keyvault-acc
+  tier: elevated
+  approvers: [team:payments, team:platform]
+- id: github-payments
+  name: GitHub team payments
+  description: Write access to the payments repositories.
+  owner: payments
+  kind: github-team
+  target: ExampleOrg/payments
+- id: prd-release-approver
+  name: Production release approver
+  description: Approves deployments to production. Kept apart from cluster-admin, so nobody approves their own change and makes it too.
+  owner: qa
+  kind: github-team
+  target: ExampleOrg/prd-approvers
+  tier: privileged
+- id: vpn
+  name: Corporate VPN
+  description: The VPN profile for the office network and the private endpoints.
+  owner: platform
+  kind: manual
+  target: Corporate VPN
+  fulfillers: [user:it.desk@example.com]
+  instructions: Add the person to the VPN user list and send them the profile.
