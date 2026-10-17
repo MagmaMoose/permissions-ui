@@ -21,7 +21,7 @@ from typing import Any
 from . import requests as rq
 from .catalog import Catalog, PersonGrants, dump_person, load_catalog, person_file
 from .directory import Directory
-from .github import GitHub, PullRequest
+from .github import GitHub, GitHubError, PullRequest
 from .notify import Notifier
 from .policy import Need, conflicts, eligible_needs, latest_expiry, members_of, needs
 
@@ -204,9 +204,7 @@ class Portal:
         branch = rq.branch_name(person)
         await github.commit(branch, {person_file(person): dump_person(changed)}, title)
         privileged = any(catalog.resources[rid].tier == "privileged" for rid in wanted)
-        text = rq.body(catalog, meta, need_list, self._origin)
-        pull = await github.open_pull(branch, title, text, [rq.LABEL, "access:pending", *(["tier:privileged"] if privileged else [])])
-        await github.set_body(pull.number, f"{text}\n\n{self._records.write('request', meta, pull.number)}")
+        pull = await self._open(github, branch, title, rq.body(catalog, meta, need_list, self._origin), meta, [rq.LABEL, "access:pending", *(["tier:privileged"] if privileged else [])])
         _log("request opened", number=pull.number, person=person, by=actor.upn, items=items)
         # A lead asking for someone on their behalf is approving it: an onboarding needs no
         # second click from the same lead. Privileged access still waits for a second person.
@@ -249,13 +247,22 @@ class Portal:
         branch = rq.branch_name(person)
         left = rq.remove_grants(current, items)
         await github.commit(branch, {person_file(person): dump_person(left) if left else None}, title)
-        text = rq.body(catalog, meta, [], self._origin)
-        pull = await github.open_pull(branch, title, text, [rq.LABEL, "access:approved", "access:removal"])
-        await github.set_body(pull.number, f"{text}\n\n{self._records.write('request', meta, pull.number)}")
+        pull = await self._open(github, branch, title, rq.body(catalog, meta, [], self._origin), meta, [rq.LABEL, "access:approved", "access:removal"])
         _log("removal opened", number=pull.number, person=person, by=actor.upn, everything=items is None)
         req = await self.request(pull.number)
         await self._finalise(req, actor)
         return await self.request(pull.number)
+
+    async def _open(self, github: GitHub, branch: str, title: str, text: str, meta: dict[str, Any], labels: list[str]) -> PullRequest:
+        """Open the pull request, then sign its request record, which needs its number. A pull
+        request left without one would still carry the grant, so it is closed."""
+        pull = await github.open_pull(branch, title, text, labels)
+        try:
+            await github.set_body(pull.number, f"{text}\n\n{self._records.write('request', meta, pull.number)}")
+        except GitHubError:
+            await github.close(pull.number)
+            raise
+        return pull
 
     # ── Deciding ──────────────────────────────────────────────────────────────────────
 

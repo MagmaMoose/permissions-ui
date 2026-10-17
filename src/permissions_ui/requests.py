@@ -6,7 +6,7 @@ resources are comments that carry the same kind of hidden record. Every record c
 under the server's record key over its pull request's number, and only comments written by this
 app's login count. So neither a lookalike comment nor another tool commenting as the same GitHub
 App approves anything, a record copied to another pull request counts for nothing, and a request
-edited on GitHub is no longer a request.
+whose record is edited on GitHub is no longer a request. The summary above it is for people only.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from .policy import Need, outstanding
 
 LABEL = "access-request"
 STATE_LABELS = ("access:pending", "access:approved", "access:declined", "access:granted")
-_RECORD = re.compile(r"<!--\s*permissions-ui:(request|approval|decline|done)\s+(\{.*?\})\s+([0-9a-f]{64})\s*-->", re.S)
+_RECORD = re.compile(r"<!--\s*permissions-ui:(request|approval|decline|done)\s+(\{[^<]*?\})\s+([0-9a-f]{64})\s*-->")
 
 State = Literal["pending", "approved", "granted", "declined", "withdrawn", "open"]
 
@@ -43,8 +43,9 @@ class Records:
         return hmac.new(key, f"{kind}\n{number}\n{raw}".encode(), hashlib.sha256).hexdigest()
 
     def write(self, kind: str, data: dict[str, Any], number: int) -> str:
-        # `--` would end the HTML comment early, so it never appears in the JSON.
-        raw = json.dumps(data, separators=(",", ":"), sort_keys=True).replace("--", "-\\u002d")
+        # Neither `--`, which ends the HTML comment, nor `<`, where a record starts, appears in the
+        # JSON: a reason holding either would otherwise hide the record it is quoted above.
+        raw = json.dumps(data, separators=(",", ":"), sort_keys=True).replace("--", "-\\u002d").replace("<", "\\u003c")
         return f"<!-- permissions-ui:{kind} {raw} {self._mac(self._keys[0], kind, number, raw)} -->"
 
     def read(self, text: str, kind: str, number: int) -> list[dict[str, Any]]:

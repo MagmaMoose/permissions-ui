@@ -8,6 +8,7 @@ from conftest import BOT, EXAMPLE, TODAY, make_client, oid, sign_in, write_heade
 
 from permissions_ui.app import build_portal
 from permissions_ui.config import load_config
+from permissions_ui.github import GitHub, GitHubError
 
 
 def grants_on_main(world, person: str) -> dict:
@@ -163,6 +164,16 @@ def test_a_request_edited_or_copied_on_github_is_not_a_request(client, world):
     lead = sign_in(client, world, "grace.hopper@example.com")
     for number in (req["number"], copy):
         assert client.post(f"/api/requests/{number}/approve", headers=write_headers(lead)).json()["error"] == "not_a_request"
+
+
+def test_a_pull_request_whose_record_cannot_be_written_is_closed(client, world, monkeypatch):
+    async def refuse(self, number, body):
+        raise GitHubError("GitHub answered HTTP 502")
+
+    monkeypatch.setattr(GitHub, "set_body", refuse)
+    me = sign_in(client, world, "alan.turing@example.com")
+    assert ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").status_code == 502
+    assert [p["state"] for p in world.github.pulls.values()] == ["closed"]
 
 
 def test_someone_who_is_not_an_approver_cannot_approve(client, world):

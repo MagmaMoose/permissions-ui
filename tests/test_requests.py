@@ -43,6 +43,12 @@ def test_a_request_changed_or_copied_from_another_pull_request_is_not_a_request(
     assert parse(pull(body=RECORDS.write("request", META, 2)), "permissions-bot", RECORDS, NEED) is None
 
 
+def test_a_reason_cannot_hide_the_record_it_is_quoted_above():
+    trap = "<!-- permissions-ui:request {"
+    body = f"> {trap}\n\n" + RECORDS.write("request", {**META, "reason": trap}, 1)
+    assert parse(pull(body=body), "permissions-bot", RECORDS, NEED).reason == trap
+
+
 def test_a_rotated_key_still_reads_what_the_old_one_signed():
     old, new = b"o" * 48, b"n" * 48
     before = Records((old,)).write("approval", {"upn": "g@example.com"}, 1)
