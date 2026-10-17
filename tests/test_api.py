@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 import yaml
-from conftest import EXAMPLE, TODAY, make_client, oid, sign_in, write_headers
+from conftest import BOT, EXAMPLE, TODAY, make_client, oid, sign_in, write_headers
 
 from permissions_ui.app import build_portal
 from permissions_ui.config import load_config
@@ -135,6 +135,34 @@ def test_an_approval_written_by_hand_on_the_pull_request_counts_for_nothing(clie
     forged = '<!-- permissions-ui:approval {"upn":"grace.hopper@example.com","resources":["grafana-viewer"]} -->'
     world.github.comments[req["number"]].append({"id": 9, "user": {"login": "mallory"}, "body": forged, "created_at": "now"})
     assert client.get(f"/api/requests/{req['number']}").json()["state"] == "pending"
+
+
+def test_an_approval_another_tool_writes_as_the_app_counts_for_nothing(client, world):
+    alan = sign_in(client, world, "alan.turing@example.com")
+    first = ask(client, alan, person=alan["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").json()
+    linus = sign_in(client, world, "linus.pauling@example.com")
+    second = ask(client, linus, person=linus["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").json()
+    lead = sign_in(client, world, "grace.hopper@example.com")
+    assert client.post(f"/api/requests/{first['number']}/approve", headers=write_headers(lead)).json()["state"] == "granted"
+    # Another tool commenting as the same GitHub App: a lookalike record, and a real approval copied from another request.
+    forged = '<!-- permissions-ui:approval {"upn":"grace.hopper@example.com","resources":["grafana-viewer"]} -->'
+    copied = next(c["body"] for c in world.github.comments[first["number"]] if "permissions-ui:approval" in c["body"])
+    for body in (forged, copied):
+        world.github.comments[second["number"]].append({"id": 9, "user": {"login": BOT}, "body": body, "created_at": "now"})
+    assert client.get(f"/api/requests/{second['number']}").json()["state"] == "pending"
+
+
+def test_a_request_edited_or_copied_on_github_is_not_a_request(client, world):
+    me = sign_in(client, world, "alan.turing@example.com")
+    req = ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").json()
+    # Another pull request from the same branch name (a fork's, say) with the body copied over.
+    copy = req["number"] + 1
+    world.github.pulls[copy], world.github.comments[copy] = dict(world.github.pulls[req["number"]]), []
+    pull = world.github.pulls[req["number"]]
+    pull["body"] = pull["body"].replace("grafana-viewer", "k8s-prd-cluster-admin")
+    lead = sign_in(client, world, "grace.hopper@example.com")
+    for number in (req["number"], copy):
+        assert client.post(f"/api/requests/{number}/approve", headers=write_headers(lead)).json()["error"] == "not_a_request"
 
 
 def test_someone_who_is_not_an_approver_cannot_approve(client, world):

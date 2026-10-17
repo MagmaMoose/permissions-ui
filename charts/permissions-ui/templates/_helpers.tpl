@@ -48,6 +48,10 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- default (printf "%s-session" (include "permissions-ui.fullname" .)) .Values.session.existingSecret }}
 {{- end }}
 
+{{- define "permissions-ui.recordsSecret" -}}
+{{- default (printf "%s-records" (include "permissions-ui.fullname" .)) .Values.records.existingSecret }}
+{{- end }}
+
 {{- define "permissions-ui.host" -}}
 {{- default (regexReplaceAll "^https?://([^/:]+).*$" .Values.config.publicOrigin "${1}") .Values.ingress.host }}
 {{- end }}
@@ -103,6 +107,8 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
   value: {{ .Values.config.sessionHours | quote }}
 - name: PERMISSIONS_UI_SESSION_KEY_FILE
   value: /etc/permissions-ui/session/{{ .Values.session.key }}
+- name: PERMISSIONS_UI_RECORD_KEY_FILE
+  value: /etc/permissions-ui/records/{{ .Values.records.key }}
 - name: PERMISSIONS_UI_FULFILMENT
   value: {{ .Values.config.fulfilment | quote }}
 - name: PERMISSIONS_UI_DIRECTORY
@@ -159,6 +165,9 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 - name: session
   mountPath: /etc/permissions-ui/session
   readOnly: true
+- name: records
+  mountPath: /etc/permissions-ui/records
+  readOnly: true
 - name: github
   mountPath: /etc/permissions-ui/github
   readOnly: true
@@ -189,6 +198,13 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
     items:
       - key: {{ .Values.session.key }}
         path: {{ .Values.session.key }}
+- name: records
+  secret:
+    secretName: {{ include "permissions-ui.recordsSecret" . }}
+    defaultMode: 0440
+    items:
+      - key: {{ .Values.records.key }}
+        path: {{ .Values.records.key }}
 {{- $github := ternary .Values.catalog.app.privateKey .Values.catalog.token (not (empty .Values.catalog.app.id)) }}
 - name: github
   secret:

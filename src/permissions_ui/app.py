@@ -33,6 +33,7 @@ from .entra import GRAPH_SCOPE, Entra, app_credential
 from .github import GitHub, GitHubError
 from .notify import Notifier
 from .oidc import SignInError
+from .requests import Records
 from .requests import Request as AccessRequest
 from .service import Actor, LocalSource, Portal, PortalError
 from .session import Cookies, Sealer, TokenCache
@@ -216,6 +217,7 @@ def build_portal(cfg: Config, http: httpx.AsyncClient, *, today=date.today, pers
         directory=directory,
         notifier=Notifier(http, cfg.teams_webhook),
         origin=cfg.origin,
+        records=Records(cfg.record_keys),
         fulfilment=cfg.fulfilment,
         auto_merge=cfg.auto_merge,
         today=today,

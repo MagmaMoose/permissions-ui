@@ -73,6 +73,7 @@ class Portal:
         directory: Directory,
         notifier: Notifier,
         origin: str,
+        records: rq.Records,
         fulfilment: str = "pull-request",
         auto_merge: bool = True,
         today: Callable[[], date] = date.today,
@@ -82,6 +83,7 @@ class Portal:
         self.directory = directory
         self._notifier = notifier
         self._origin = origin
+        self._records = records
         self._fulfilment = fulfilment
         self._auto_merge = auto_merge
         self.today = today
@@ -120,12 +122,12 @@ class Portal:
             return None
 
     async def _parse(self, catalog: Catalog, pull: PullRequest) -> rq.Request | None:
-        metas = rq.records(pull.body, "request")
+        metas = self._records.read(pull.body, "request", pull.number)
         if not metas:
             return None
         meta = metas[-1]
         items = [i for i in meta.get("items") or [] if isinstance(i, dict)]
-        return rq.parse(pull, await self._repo().bot(), self.needs_of(catalog, str(meta.get("kind")), items))
+        return rq.parse(pull, await self._repo().bot(), self._records, self.needs_of(catalog, str(meta.get("kind")), items))
 
     async def request(self, number: int) -> rq.Request:
         catalog = await self.catalog()
@@ -202,14 +204,16 @@ class Portal:
         branch = rq.branch_name(person)
         await github.commit(branch, {person_file(person): dump_person(changed)}, title)
         privileged = any(catalog.resources[rid].tier == "privileged" for rid in wanted)
-        pull = await github.open_pull(branch, title, rq.body(catalog, meta, need_list, self._origin), [rq.LABEL, "access:pending", *(["tier:privileged"] if privileged else [])])
+        text = rq.body(catalog, meta, need_list, self._origin)
+        pull = await github.open_pull(branch, title, text, [rq.LABEL, "access:pending", *(["tier:privileged"] if privileged else [])])
+        await github.set_body(pull.number, f"{text}\n\n{self._records.write('request', meta, pull.number)}")
         _log("request opened", number=pull.number, person=person, by=actor.upn, items=items)
         # A lead asking for someone on their behalf is approving it: an onboarding needs no
         # second click from the same lead. Privileged access still waits for a second person.
         if person != actor.upn:
             mine = [n.resource for n in await eligible_needs(catalog, self.directory, need_list, actor.upn)]
             if mine:
-                note = rq.record("approval", {"upn": actor.upn, "name": actor.name, "oid": actor.oid, "resources": mine, "at": rq.now()})
+                note = self._records.write("approval", {"upn": actor.upn, "name": actor.name, "oid": actor.oid, "resources": mine, "at": rq.now()}, pull.number)
                 await github.comment(pull.number, f"Asked for and approved by {actor.name or actor.upn} (`{actor.upn}`).\n\n{note}")
         req = await self.request(pull.number)
         if req.state == "approved":
@@ -245,7 +249,9 @@ class Portal:
         branch = rq.branch_name(person)
         left = rq.remove_grants(current, items)
         await github.commit(branch, {person_file(person): dump_person(left) if left else None}, title)
-        pull = await github.open_pull(branch, title, rq.body(catalog, meta, [], self._origin), [rq.LABEL, "access:approved", "access:removal"])
+        text = rq.body(catalog, meta, [], self._origin)
+        pull = await github.open_pull(branch, title, text, [rq.LABEL, "access:approved", "access:removal"])
+        await github.set_body(pull.number, f"{text}\n\n{self._records.write('request', meta, pull.number)}")
         _log("removal opened", number=pull.number, person=person, by=actor.upn, everything=items is None)
         req = await self.request(pull.number)
         await self._finalise(req, actor)
@@ -271,7 +277,7 @@ class Portal:
         if not await eligible_needs(catalog, self.directory, req.outstanding, actor.upn):
             raise PortalError(403, "not_an_approver", "You are not among the approvers this request still waits for.")
         counts_for = [n.resource for n in await eligible_needs(catalog, self.directory, all_needs, actor.upn)]
-        note = rq.record("approval", {"upn": actor.upn, "name": actor.name, "oid": actor.oid, "resources": counts_for, "at": rq.now()})
+        note = self._records.write("approval", {"upn": actor.upn, "name": actor.name, "oid": actor.oid, "resources": counts_for, "at": rq.now()}, number)
         await github.comment(number, f"Approved by {actor.name or actor.upn} (`{actor.upn}`) in permissions-ui.\n\n{note}")
         _log("request approved", number=number, by=actor.upn, resources=counts_for)
         req = await self.request(number)
@@ -291,7 +297,7 @@ class Portal:
             all_needs = self.needs_of(catalog, req.kind, list(req.items)) or []
             if not await eligible_needs(catalog, self.directory, all_needs, actor.upn):
                 raise PortalError(403, "not_an_approver", "Only an approver, an admin or the requester closes a request.")
-        note = rq.record("decline", {"upn": actor.upn, "name": actor.name, "reason": reason, "withdrawn": withdrawn, "at": rq.now()})
+        note = self._records.write("decline", {"upn": actor.upn, "name": actor.name, "reason": reason, "withdrawn": withdrawn, "at": rq.now()}, number)
         verb = "Withdrawn" if withdrawn else "Declined"
         await github.comment(number, f"{verb} by {actor.name or actor.upn} (`{actor.upn}`): {reason}\n\n{note}")
         await github.close(number)
@@ -318,7 +324,7 @@ class Portal:
             fulfillers |= await members_of(spec, catalog, self.directory)
         if actor.upn not in fulfillers and not actor.admin:
             raise PortalError(403, "not_a_fulfiller", "You are not a fulfiller of that resource.")
-        note = rq.record("done", {"resource": resource, "upn": actor.upn, "name": actor.name, "at": rq.now()})
+        note = self._records.write("done", {"resource": resource, "upn": actor.upn, "name": actor.name, "at": rq.now()}, number)
         await github.comment(number, f"{found.name} set up by {actor.name or actor.upn} (`{actor.upn}`).\n\n{note}")
         manual = {r for r in catalog.resources_of(req.items) if catalog.resources[r].kind == "manual"}
         if manual <= {*req.done, resource}:
@@ -367,7 +373,7 @@ class Portal:
             changed: PersonGrants | None = rq.apply_grants(current, req.person, items, reason=req.reason, requested_by=req.requested_by, expires=expires, today=today)
             changed = rq.finalise(changed, items, [a.upn for a in req.approvals], req.number)  # type: ignore[arg-type]
         else:
-            everything = bool(rq.records(pull.body, "request")[-1].get("everything"))
+            everything = bool(self._records.read(pull.body, "request", req.number)[-1].get("everything"))
             changed = rq.remove_grants(current, None if everything else items) if current else None
         content = dump_person(changed) if changed else None
         await github.commit(pull.head, {person_file(req.person): content}, f"{pull.title} (#{req.number})", replace=True)

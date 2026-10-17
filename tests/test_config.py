@@ -15,6 +15,8 @@ def test_the_test_environment_loads(env):
     [
         ({"AZURE_TENANT_ID": "nope"}, "AZURE_TENANT_ID must be a GUID"),
         ({"PERMISSIONS_UI_SESSION_KEY": "short"}, "at least 32 characters"),
+        ({"PERMISSIONS_UI_RECORD_KEY": ""}, "PERMISSIONS_UI_RECORD_KEY"),
+        ({"PERMISSIONS_UI_RECORD_KEY": "r" * 48 + "\nshort"}, "one key per line"),
         ({"PERMISSIONS_UI_PUBLIC_ORIGIN": "http://access.example.test"}, "must be https"),  # DevSkim: ignore DS137138 - deliberately invalid input; test asserts config rejects it
         ({"PERMISSIONS_UI_PUBLIC_ORIGIN": "https://access.example.test/path"}, "with no path"),
         ({"PERMISSIONS_UI_GITHUB_REPO": "not a repo"}, "owner/name"),
@@ -53,6 +55,8 @@ def test_one_catalog_source(env, tmp_path):
     local = {k: v for k, v in env.items() if not k.startswith("PERMISSIONS_UI_GITHUB")}
     with pytest.raises(ConfigError, match="not a directory"):
         load_config({**local, "PERMISSIONS_UI_CATALOG_DIR": str(tmp_path / "missing")})
+    # Without a repository there are no records, so no key either.
+    local = {k: v for k, v in local.items() if k != "PERMISSIONS_UI_RECORD_KEY"}
     assert load_config({**local, "PERMISSIONS_UI_CATALOG_DIR": str(tmp_path)}).github is None
 
 
@@ -66,3 +70,10 @@ def test_secrets_come_from_files(env, tmp_path):
     no_credential = {k: v for k, v in env.items() if k != "AZURE_FEDERATED_TOKEN_FILE"}
     with pytest.raises(ConfigError, match="AZURE_FEDERATED_TOKEN_FILE"):
         load_config(no_credential)
+
+
+def test_the_record_key_file_holds_one_key_per_line(env, tmp_path):
+    keys = tmp_path / "record-key"
+    keys.write_text("n" * 40 + "\n" + "o" * 40 + "\n")
+    cfg = load_config({**{k: v for k, v in env.items() if k != "PERMISSIONS_UI_RECORD_KEY"}, "PERMISSIONS_UI_RECORD_KEY_FILE": str(keys)})
+    assert cfg.record_keys == (b"n" * 40, b"o" * 40)

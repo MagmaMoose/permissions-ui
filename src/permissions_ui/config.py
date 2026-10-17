@@ -54,6 +54,8 @@ class Config:
     authority: str
     session_key: bytes
     session_seconds: int
+    # Sign the app's records on pull requests: the first signs, every one verifies.
+    record_keys: tuple[bytes, ...] = ()
     federated_token_file: Path | None = None
     client_secret: str | None = None
     # Exactly one of these: a repository (requests open pull requests) or a local directory
@@ -170,6 +172,10 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         raise ConfigError("set PERMISSIONS_UI_GITHUB_REPO (requests open pull requests there) or PERMISSIONS_UI_CATALOG_DIR (read-only), not both")
     if catalog_dir and not Path(catalog_dir).is_dir():
         raise ConfigError("PERMISSIONS_UI_CATALOG_DIR is not a directory")
+    # One key per line, so a rotation keeps the old key below the new one.
+    record_keys = tuple(line.strip().encode() for line in _secret(env, "PERMISSIONS_UI_RECORD_KEY").splitlines() if line.strip())
+    if has_repo and (not record_keys or any(len(key) < 32 for key in record_keys)):
+        raise ConfigError("PERMISSIONS_UI_RECORD_KEY (or PERMISSIONS_UI_RECORD_KEY_FILE) must hold at least 32 characters, one key per line")
 
     fulfilment = env.get("PERMISSIONS_UI_FULFILMENT", "pull-request").strip()
     if fulfilment not in ("pull-request", "graph"):
@@ -224,6 +230,7 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         origin=_origin(env["PERMISSIONS_UI_PUBLIC_ORIGIN"], "PERMISSIONS_UI_PUBLIC_ORIGIN"),
         session_key=session_key.encode(),
         session_seconds=hours * 3600,
+        record_keys=record_keys,
         github=_github(env) if has_repo else None,
         catalog_dir=Path(catalog_dir) if catalog_dir else None,
         fulfilment=fulfilment,

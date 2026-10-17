@@ -16,6 +16,8 @@ catalog:
 notifications:
   teams:
     existingSecret: permissions-ui-teams
+records:
+  existingSecret: permissions-ui-records
 branding:
   accent: "#0b6e4f"
   accentText: "#ffffff"

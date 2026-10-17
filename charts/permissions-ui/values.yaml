@@ -65,7 +65,8 @@ catalog:
   # https://api.github.com, or https://<host>/api/v3 for GitHub Enterprise Server.
   apiUrl: https://api.github.com
   # A GitHub App installed on that repository only, with contents, pull requests and issues
-  # read-write (preferred), or a token. Each from a Secret.
+  # read-write (preferred), or a token. Each from a Secret. The App's token is asked for that
+  # repository and those permissions alone, so the App may be one that other tools share.
   app:
     id: ""
     privateKey:
@@ -107,6 +108,15 @@ session:
   # every replica. Empty: the chart creates one on install and keeps it on upgrade.
   existingSecret: ""
   key: session-key
+
+records:
+  # A Secret holding the key that signs the app's records on pull requests: requests, approvals,
+  # declines and done notes (at least 32 characters). Empty: the chart creates one on install and
+  # keeps it on upgrade and uninstall; a renderer without cluster access (helm template) makes a
+  # new one every time, so set this there. A new key drops every request the old one signed from
+  # the portal: to rotate, put the new key on the first line and keep the old one below it.
+  existingSecret: ""
+  key: record-key
 
 serviceAccount:
   create: true
