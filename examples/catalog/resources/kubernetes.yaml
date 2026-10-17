@@ -1,0 +1,26 @@
+- id: k8s-acc-payments-write
+  name: Kubernetes acc, payments, write
+  description: Edit, Secrets included, in the payments namespaces on the acc cluster.
+  owner: payments
+  kind: entra-group
+  target: k8s-acc-payments-write
+  tier: elevated
+  max_days: 365
+  tags: [kubernetes, acc]
+- id: k8s-prd-payments-read
+  name: Kubernetes prd, payments, read
+  description: View, without Secrets, in the payments namespaces on the prd cluster.
+  owner: payments
+  kind: entra-group
+  target: k8s-prd-payments-read
+  tags: [kubernetes, prd]
+- id: k8s-prd-cluster-admin
+  name: Kubernetes prd, cluster-admin
+  description: Everything on the prd cluster. For incidents and platform work only.
+  owner: platform
+  kind: entra-group
+  target: k8s-prd-cluster-admin
+  tier: privileged
+  max_days: 30
+  incompatible: [prd-release-approver]
+  tags: [kubernetes, prd]

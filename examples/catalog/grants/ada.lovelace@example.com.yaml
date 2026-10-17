@@ -1,0 +1,9 @@
+person: ada.lovelace@example.com
+grants:
+- role: payments-developer
+  reason: Joined the payments team
+  requested_by: katherine.johnson@example.com
+  approved_by: [katherine.johnson@example.com]
+  granted: '2026-09-01'
+  expires: '2027-08-31'
+  request: 7

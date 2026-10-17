@@ -1,0 +1,15 @@
+permissions-ui is running as {{ include "permissions-ui.fullname" . }} in {{ .Release.Namespace }}.
+
+Open {{ .Values.config.publicOrigin }} and sign in. Register this redirect URI on the app
+registration ({{ .Values.azure.clientId }}):
+
+  {{ .Values.config.publicOrigin }}/auth/callback
+{{- if .Values.azure.workloadIdentity.enabled }}
+
+and a federated credential for this service account:
+
+  subject: system:serviceaccount:{{ .Release.Namespace }}:{{ include "permissions-ui.serviceAccountName" . }}
+  audience: {{ .Values.azure.workloadIdentity.audience }}
+{{- end }}
+
+Requests open pull requests in {{ .Values.catalog.repository }} ({{ .Values.catalog.branch }}{{ with .Values.catalog.path }}, {{ . }}/{{ end }}).

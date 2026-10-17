@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+frontend/node_modules/
+frontend/dist/
+.env
+
+# OpenTofu
+terraform/**/.terraform/
+terraform/**/.terraform.lock.hcl

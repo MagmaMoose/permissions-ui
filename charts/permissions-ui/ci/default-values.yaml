@@ -1,0 +1,39 @@
+# Everything on, for CI's lint and render.
+azure:
+  tenantId: 11111111-2222-3333-4444-555555555555
+  clientId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+config:
+  publicOrigin: https://access.example.com
+  fulfilment: graph
+  groupPrefixes: ["acl-", "k8s-"]
+catalog:
+  repository: example/access
+  path: access
+  app:
+    id: "123456"
+    privateKey:
+      existingSecret: permissions-ui-github
+notifications:
+  teams:
+    existingSecret: permissions-ui-teams
+branding:
+  accent: "#0b6e4f"
+  accentText: "#ffffff"
+  accentDark: "#5fd3a8"
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+ingress:
+  enabled: true
+  className: traefik
+  tls:
+    secretName: permissions-ui-tls
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+priorityClassName: medium
+topologySpread:
+  whenUnsatisfiable: DoNotSchedule
+  nodeTaintsPolicy: Honor

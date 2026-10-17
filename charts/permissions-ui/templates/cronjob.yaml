@@ -1,0 +1,63 @@
+{{- if .Values.expiry.enabled }}
+{{- include "permissions-ui.validate" . }}
+# Once a day: a removal pull request for every grant past its expiry date, merged at once.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "permissions-ui.fullname" . }}-expiry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "permissions-ui.labels" . | nindent 4 }}
+    app.kubernetes.io/component: expiry
+spec:
+  schedule: {{ .Values.expiry.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: {{ include "permissions-ui.name" . }}
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: expiry
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "permissions-ui.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.priorityClassName }}
+          priorityClassName: {{ . }}
+          {{- end }}
+          securityContext:
+            {{- include "permissions-ui.podSecurityContext" . | nindent 12 }}
+          containers:
+            - name: expiry
+              image: {{ include "permissions-ui.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: ["expire"]
+              securityContext:
+                {{- include "permissions-ui.containerSecurityContext" . | nindent 16 }}
+              env:
+                {{- include "permissions-ui.env" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.expiry.resources | nindent 16 }}
+              volumeMounts:
+                {{- include "permissions-ui.volumeMounts" . | nindent 16 }}
+          volumes:
+            {{- include "permissions-ui.volumes" . | nindent 12 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

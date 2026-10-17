@@ -1,0 +1,16 @@
+# The smallest install with a token and a client secret instead of a GitHub App and workload identity.
+azure:
+  tenantId: 11111111-2222-3333-4444-555555555555
+  clientId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+  workloadIdentity:
+    enabled: false
+  clientSecret:
+    existingSecret: permissions-ui-entra
+config:
+  publicOrigin: https://access.example.com
+catalog:
+  repository: example/access
+  token:
+    existingSecret: permissions-ui-github
+expiry:
+  enabled: false

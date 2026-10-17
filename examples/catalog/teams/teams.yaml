@@ -1,0 +1,16 @@
+# A team's leads approve what the team owns, and a new member gets the team's roles.
+- id: platform
+  name: Platform
+  description: Runs the clusters, the pipelines and the shared services.
+  leads: [grace.hopper@example.com, linus.pauling@example.com]
+  roles: [platform-engineer]
+- id: payments
+  name: Payments
+  description: Builds and runs the payments service.
+  leads: [katherine.johnson@example.com]
+  roles: [payments-developer]
+- id: qa
+  name: Quality
+  description: Tests every release before it reaches production.
+  leads: [margaret.hamilton@example.com]
+  roles: [qa-tester]
