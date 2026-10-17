@@ -246,6 +246,38 @@ def test_branch_rules_that_hold_the_merge_leave_the_request_approved(world, env)
     assert client.post(f"/api/requests/{req['number']}/approve", headers=write_headers(lead)).json()["state"] == "granted"
 
 
+def test_the_merge_github_refuses_while_it_catches_up_with_the_rebuild_is_tried_once_more(client, world):
+    world.github.lag = 1
+    me = sign_in(client, world, "alan.turing@example.com")
+    req = ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").json()
+    lead = sign_in(client, world, "grace.hopper@example.com")
+    assert client.post(f"/api/requests/{req['number']}/approve", headers=write_headers(lead)).json()["state"] == "granted"
+    built = world.github.refs[world.github.pulls[req["number"]]["head"]]
+    assert world.github.reviews[-1]["commit_id"] == built
+    assert grants_on_main(world, me["upn"])["grants"][0]["approved_by"] == ["grace.hopper@example.com"]
+
+
+def test_a_commit_pushed_onto_the_branch_after_the_rebuild_is_never_merged(client, world):
+    me = sign_in(client, world, "alan.turing@example.com")
+    req = ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").json()
+    world.github.intruder = {f"access/grants/{me['upn']}.yaml": "grants:\n- resource: k8s-prd-cluster-admin\n"}
+    lead = sign_in(client, world, "grace.hopper@example.com")
+    assert client.post(f"/api/requests/{req['number']}/approve", headers=write_headers(lead)).json()["state"] == "approved"
+    assert grants_on_main(world, me["upn"]) == {}
+    assert "branch rules still hold this back" in world.github.comments[req["number"]][-1]["body"]
+    world.github.intruder = None
+    assert client.post(f"/api/requests/{req['number']}/approve", headers=write_headers(lead)).json()["state"] == "granted"
+    assert [g["resource"] for g in grants_on_main(world, me["upn"])["grants"]] == ["grafana-viewer"]
+
+
+def test_an_approval_after_the_hundredth_comment_counts(client, world):
+    me = sign_in(client, world, "alan.turing@example.com")
+    req = ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").json()
+    world.github.comments[req["number"]] += [{"id": 1000 + i, "user": {"login": "someone"}, "body": "+1", "created_at": "now"} for i in range(150)]
+    lead = sign_in(client, world, "grace.hopper@example.com")
+    assert client.post(f"/api/requests/{req['number']}/approve", headers=write_headers(lead)).json()["state"] == "granted"
+
+
 def test_a_local_catalog_is_read_only(world, env):
     local = {k: v for k, v in env.items() if not k.startswith("PERMISSIONS_UI_GITHUB") and k != "PERMISSIONS_UI_CATALOG_PATH"}
     client = make_client(world, {**local, "PERMISSIONS_UI_CATALOG_DIR": str(EXAMPLE)})

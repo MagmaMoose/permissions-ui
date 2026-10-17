@@ -32,7 +32,11 @@ image, a Helm chart (`charts/permissions-ui`) and a reference OpenTofu module
   CI greps `frontend/dist/index.html` for it.
 - **The image name follows the repository name** (`ghcr.io/magmamoose/permissions-ui`). The chart's
   default image is that name; a rename means a chart change in the same PR.
-- **Finalising rebuilds the request branch on the latest `main` with a force update.** The
-  branches under `access/` belong to the app; a human commit there is overwritten.
+- **Finalising rebuilds the request branch on the latest `main` with a force update, and merges
+  exactly that commit.** The branches under `access/` belong to the app; a human commit there is
+  overwritten, or holds the merge back if it lands between the rebuild and the merge. For a few
+  seconds after a force update GitHub still shows the old head and refuses the merge (405):
+  `merge` tries once more after `CATCH_UP_SECONDS`, and a slower GitHub leaves the request
+  approved, with the branch-rules comment, until someone approves it again.
 - **No client or employer names anywhere in this public repository**: code, tests, fixtures,
   docs, commits. Examples use example.com and fictional teams.

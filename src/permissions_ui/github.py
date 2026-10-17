@@ -24,6 +24,8 @@ import jwt
 
 PERMISSIONS = {"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"}
 _LEVELS = {"read": 1, "write": 2, "admin": 3}
+# For a few seconds after a force update GitHub still shows a pull request's old head and refuses to merge it (405).
+CATCH_UP_SECONDS = 3.0
 
 
 class GitHubError(Exception):
@@ -227,7 +229,12 @@ class GitHub:
         pull = PullRequest.parse(await self._call("GET", f"/repos/{self.repo}/pulls/{number}"))
         if not with_comments:
             return pull
-        data = await self._call("GET", f"/repos/{self.repo}/issues/{number}/comments", params={"per_page": 100})
+        data: list[dict[str, Any]] = []
+        for page in range(1, 11):  # 1,000 comments at most, so a flood of them cannot make one read endless
+            batch = await self._call("GET", f"/repos/{self.repo}/issues/{number}/comments", params={"per_page": 100, "page": page})
+            data += batch
+            if len(batch) < 100:
+                break
         comments = tuple(Comment(int(c["id"]), str((c.get("user") or {}).get("login") or ""), str(c.get("body") or ""), str(c.get("created_at") or "")) for c in data)
         return PullRequest(**{**pull.__dict__, "comments": comments})
 
@@ -243,15 +250,18 @@ class GitHub:
         for name in remove:
             await self._call("DELETE", f"/repos/{self.repo}/issues/{number}/labels/{name}", ok=(200, 404))
 
-    async def approve(self, number: int, body: str) -> None:
-        """A pull request review, for a branch rule that wants one before merging."""
-        await self._call("POST", f"/repos/{self.repo}/pulls/{number}/reviews", json={"event": "APPROVE", "body": body}, ok=(200, 422))
+    async def approve(self, number: int, sha: str, body: str) -> None:
+        """A pull request review of exactly `sha`, for a branch rule that wants one before merging."""
+        await self._call("POST", f"/repos/{self.repo}/pulls/{number}/reviews", json={"event": "APPROVE", "body": body, "commit_id": sha}, ok=(200, 422))
 
-    async def merge(self, number: int, sha: str, title: str) -> bool:
-        """Merge if the branch rules let this app; False when they still wait for something."""
+    async def merge(self, number: int, sha: str, title: str, *, retry: bool = True) -> bool:
+        """Merge exactly `sha` if the branch rules let this app; False when they still wait for something."""
         try:
             await self._call("PUT", f"/repos/{self.repo}/pulls/{number}/merge", json={"sha": sha, "merge_method": "squash", "commit_title": title})
         except GitHubError as err:
+            if err.status == 405 and retry:
+                await asyncio.sleep(CATCH_UP_SECONDS)
+                return await self.merge(number, sha, title, retry=False)
             if err.status in (405, 409, 422):
                 return False
             raise
