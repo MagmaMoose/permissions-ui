@@ -1,8 +1,11 @@
 """Signed-in state, sealed into cookies with AES-256-GCM. The server keeps no session store.
 
 Any replica can serve any request and a restart signs nobody out. The cookie holds who the
-person is and their app roles, nothing that reaches another system: every directory and GitHub
-call runs as the app.
+person is and their app roles. Every GitHub call runs as the app, and so does every directory
+call in the default `app` directory mode. In the `delegated` mode the cookie also carries the
+refresh token, never an access token: redeeming it takes the app's own credential, so it is
+useless anywhere else. The Graph token it is redeemed for stays in each replica's memory
+(TokenCache).
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ import base64
 import json
 import os
 import time
+from collections import OrderedDict
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
@@ -96,3 +100,29 @@ class Cookies:
 
     def clear(self, response: Response, name: str) -> None:
         response.delete_cookie(name, path="/", secure=self._secure, httponly=True, samesite="lax")
+
+
+class TokenCache:
+    """Access tokens by session, in this replica's memory only."""
+
+    def __init__(self, size: int = 5000, margin: int = 120):
+        self._tokens: OrderedDict[str, tuple[str, float]] = OrderedDict()
+        self._size = size
+        self._margin = margin
+
+    def get(self, key: str) -> str | None:
+        entry = self._tokens.get(key)
+        if entry is None or entry[1] - self._margin <= time.time():
+            self._tokens.pop(key, None)
+            return None
+        self._tokens.move_to_end(key)
+        return entry[0]
+
+    def put(self, key: str, token: str, expires_at: float) -> None:
+        self._tokens[key] = (token, expires_at)
+        self._tokens.move_to_end(key)
+        while len(self._tokens) > self._size:
+            self._tokens.popitem(last=False)
+
+    def drop(self, key: str) -> None:
+        self._tokens.pop(key, None)

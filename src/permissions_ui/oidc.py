@@ -2,7 +2,8 @@
 
 What differs between identity providers lives in a subclass: the endpoints, the app's own
 credential, which claims have to hold, and where a person's roles come from. Entra ID is in
-entra.py. Signing in needs only the ID token: no refresh token is asked for or kept.
+entra.py. Signing in needs only the ID token; in the delegated directory mode the refresh token
+also stays with the person's session, redeemed for their own Microsoft Graph token.
 
 The ID token is verified against the provider's published keys although it arrives straight
 from the token endpoint over TLS (OIDC Core 3.1.3.7 would allow skipping that): issuer,
@@ -38,6 +39,9 @@ class SignIn:
     name: str
     upn: str
     roles: list[Any]
+    access_token: str = ""
+    expires_at: float = 0.0
+    refresh_token: str = ""
 
 
 def pkce_challenge(verifier: str) -> str:
@@ -123,6 +127,13 @@ class OIDC:
         )
         claims = await self.verify_id_token(str(body.get("id_token") or ""), nonce=nonce)
         return await self._sign_in(body, claims)
+
+    async def refresh(self, refresh_token: str, *, scope: str) -> tuple[str, float]:
+        """A fresh access token for `scope` from a session's refresh token, and when it expires."""
+        body = await self._redeem({"grant_type": "refresh_token", "refresh_token": refresh_token, "scope": f"offline_access {scope}"})
+        if not body.get("access_token"):
+            raise SignInError(f"{self.name} returned no access token", status=401)
+        return str(body["access_token"]), time.time() + int(body.get("expires_in") or 3600)
 
     async def _signing_key(self, kid: str) -> jwt.PyJWK:
         now = time.monotonic()

@@ -36,8 +36,9 @@ sequenceDiagram
     G->>E: pipeline applies the memberships (or permissions-ui does, in graph mode)
 ```
 
-People sign in with Entra ID. The app reads the directory as itself (who exists, who is in which
-group) and writes only to the catalog repository, through a GitHub App installed there alone.
+People sign in with Entra ID. The app reads the directory (who exists, who is in which group) as
+itself or, in the `delegated` directory mode, as the signed-in person, and writes only to the
+catalog repository, through a GitHub App installed there alone.
 Changing the groups is left to the pipeline that applies the catalog, with the reference
 Terraform module in [`terraform/entra-grants`](terraform/entra-grants), unless you choose the
 `graph` mode, where the app changes them itself.
@@ -131,9 +132,19 @@ satisfy them with its review, or set `config.merge: manual` and merge by hand.
 
 - Platform **Web**, redirect URI `https://<host>/auth/callback`.
 - App roles `Admin` and `Auditor` (allowed member types: users), assigned to who needs them.
-- Microsoft Graph application permissions `User.Read.All` and `GroupMember.Read.All`, with admin
-  consent. For the `graph` mode, `GroupMember.ReadWrite.All` instead, or better, Groups
-  Administrator scoped to an administrative unit that holds only the groups in the catalog.
+- Microsoft Graph permissions to read the directory, for one of two modes (`config.directory`):
+  - `app`, the default: **application** permissions `User.Read.All` and `GroupMember.Read.All`,
+    and the app reads as itself. Admin consent to Microsoft Graph application permissions takes
+    a Privileged Role Administrator (or a Global Administrator).
+  - `delegated`: **delegated** permissions `openid`, `profile`, `offline_access`, `User.Read.All`
+    and `GroupMember.Read.All`, with tenant-wide admin consent, which a Cloud Application
+    Administrator or Application Administrator can grant. The app reads as the signed-in person
+    and sees what they may see: by default a member reads every user and group, a guest less,
+    and a tenant can stop members reading other users. The person's refresh token rides in their
+    sealed session cookie. The expiry job reads no Graph, so it needs nobody signed in.
+- For the `graph` fulfilment mode, the `app` mode with `GroupMember.ReadWrite.All` instead, or
+  better, Groups Administrator scoped to an administrative unit that holds only the groups in the
+  catalog. It does not combine with `delegated`: changing groups needs the app's own permission.
 - On Kubernetes, a federated credential for the service account: issuer, your cluster's
   service-account issuer; subject, `system:serviceaccount:<namespace>:<service account>`;
   audience, `api://AzureADTokenExchange`. Or a client secret where there is no workload identity.
@@ -146,7 +157,8 @@ read. Install it on the catalog repository only, and keep its private key in a S
 ### 4. Applying grants
 
 Run [`terraform/entra-grants`](terraform/entra-grants) from the catalog repository's pipeline on
-every merge. Or set `config.fulfilment: graph` to let permissions-ui change the groups itself.
+every merge. Or set `config.fulfilment: graph` to let permissions-ui change the groups itself
+(in the `app` directory mode only).
 
 ### 5. Install
 
@@ -179,6 +191,7 @@ is described in [`charts/permissions-ui/values.yaml`](charts/permissions-ui/valu
 | `PERMISSIONS_UI_GITHUB_BOT` | whose comments count as approval records; found out by itself |
 | `PERMISSIONS_UI_CATALOG_DIR` | instead of a repository: a local catalog, read-only |
 | `PERMISSIONS_UI_FULFILMENT` | `pull-request` (default) or `graph` |
+| `PERMISSIONS_UI_DIRECTORY` | `app` (default): Microsoft Graph read as the app; `delegated`: as the signed-in person, not with `graph` fulfilment |
 | `PERMISSIONS_UI_MERGE` | `auto` (default) or `manual` |
 | `PERMISSIONS_UI_GROUP_PREFIXES` | comma-separated group name prefixes to check for undocumented groups |
 | `PERMISSIONS_UI_ADMIN_ROLE`, `PERMISSIONS_UI_AUDITOR_ROLE` | app role values; default `Admin`, `Auditor` |
@@ -190,11 +203,15 @@ and the expiry run.
 
 ## Security
 
-- **Backend for frontend.** The browser holds no token: the session is an AES-GCM sealed,
-  `__Host-`, `HttpOnly`, `Secure`, `SameSite=Strict` cookie, and every write also needs a CSRF
-  token and this origin. No inline script or style, under a strict Content Security Policy.
+- **Backend for frontend.** The browser holds no token it can read: the session is an AES-GCM
+  sealed, `__Host-`, `HttpOnly`, `Secure`, `SameSite=Strict` cookie, and every write also needs a
+  CSRF token and this origin. No inline script or style, under a strict Content Security Policy.
+  In the `delegated` directory mode the sealed cookie carries the person's refresh token, never
+  an access token; redeeming it takes the app's own credential, and the Graph tokens it is
+  redeemed for stay in each replica's memory.
 - **The app's write access is the catalog repository**, through a GitHub App held to that
-  repository. It reads the directory; it writes to it only in the `graph` mode.
+  repository. It reads the directory, as itself or as the signed-in person; it writes to it only
+  in the `graph` mode.
 - **Approvals are checked by the server** against the catalog and the directory before the app
   records them, and only the app's own records count.
 - **Every change is reviewable**: a request, its approvals and its merge are a pull request, so

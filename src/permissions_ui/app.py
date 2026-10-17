@@ -5,12 +5,15 @@ SameSite=Strict session cookie. Who may see everyone's access: admins, auditors 
 everyone else sees the catalog, their own access and the requests that involve them.
 """
 
+import asyncio
 import hmac
 import json
 import logging
 import re
 import secrets
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import date
 from typing import Annotated, Any, Self
 from urllib.parse import urlencode
@@ -25,20 +28,23 @@ from pydantic import BaseModel, Field, model_validator
 from . import insights
 from .catalog import Catalog, CatalogError
 from .config import Branding, Config
-from .directory import Directory, DirectoryError
-from .entra import Entra, app_credential
+from .directory import AppToken, Directory, DirectoryError
+from .entra import GRAPH_SCOPE, Entra, app_credential
 from .github import GitHub, GitHubError
 from .notify import Notifier
 from .oidc import SignInError
 from .requests import Request as AccessRequest
 from .service import Actor, LocalSource, Portal, PortalError
-from .session import Cookies, Sealer
+from .session import Cookies, Sealer, TokenCache
 
 log = logging.getLogger("permissions_ui")
 
 LOGIN_SECONDS = 600
 SOURCE = "https://github.com/MagmaMoose/permissions-ui"
 _UPN = r"^[^@\s/\\]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+# The session of the request being served: in the delegated directory mode its refresh token
+# reads the directory, and its person keys the directory cache.
+_session: ContextVar[dict[str, Any] | None] = ContextVar("permissions_ui_session", default=None)
 
 CSP = "; ".join(
     [
@@ -184,8 +190,21 @@ def request_json(catalog: Catalog, req: AccessRequest, *, can_approve: bool = Fa
     }
 
 
-def build_portal(cfg: Config, http: httpx.AsyncClient, *, today=date.today) -> Portal:
-    directory = Directory(http, token_url=cfg.token_url, client_id=cfg.client_id, credential=lambda: app_credential(cfg))
+def _reader() -> str:
+    return str((_session.get() or {}).get("oid", ""))
+
+
+async def _nobody() -> str:
+    raise DirectoryError("the delegated directory mode reads Microsoft Graph as a signed-in person, and nobody is signed in here")
+
+
+def build_portal(cfg: Config, http: httpx.AsyncClient, *, today=date.today, person_token: Callable[[], Awaitable[str]] | None = None) -> Portal:
+    """`person_token` reads the directory as the signed-in person in the delegated mode. Without
+    one, as in the expire job, nothing may read it; pull-request fulfilment never does."""
+    if cfg.directory == "app":
+        directory = Directory(http, token=AppToken(http, token_url=cfg.token_url, client_id=cfg.client_id, credential=lambda: app_credential(cfg)))
+    else:
+        directory = Directory(http, token=person_token or _nobody, reader=_reader)
     github = None
     if cfg.github is not None:
         gh = cfg.github
@@ -207,7 +226,30 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
     http = httpx.AsyncClient(transport=transport, follow_redirects=False)
     idp = Entra(cfg, http)
     cookies = Cookies(Sealer(cfg.session_key), secure=cfg.secure_cookies)
-    portal = build_portal(cfg, http, today=today)
+    delegated = cfg.directory == "delegated"
+    tokens = TokenCache()
+    refreshing = asyncio.Lock()
+
+    async def person_token() -> str:
+        """The signed-in person's Graph token, redeemed from their session's refresh token."""
+        data = _session.get() or {}
+        key = str(data.get("sid", ""))
+        if (token := tokens.get(key)) is not None:
+            return token
+        async with refreshing:
+            if (token := tokens.get(key)) is not None:
+                return token
+            try:
+                token, expires_at = await idp.refresh(str(data.get("rt", "")), scope=GRAPH_SCOPE)
+            except SignInError as err:
+                _log("graph token failed", user=data.get("oid"), status=err.status, reason=str(err))
+                if err.status == 401:
+                    raise HTTPException(401, "signed_out") from err
+                raise DirectoryError(f"cannot get your Microsoft Graph token: {err}") from err
+            tokens.put(key, token, expires_at)
+            return token
+
+    portal = build_portal(cfg, http, today=today, person_token=person_token if delegated else None)
     directory = portal.directory
 
     @asynccontextmanager
@@ -270,10 +312,12 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
 
     # ── Sessions ──────────────────────────────────────────────────────────────────────
 
-    def session(request: Request) -> dict[str, Any]:
+    async def session(request: Request) -> dict[str, Any]:
+        # async, so it runs in the route's own task and the ContextVar reaches the directory.
         data = cookies.read_session(request)
-        if data is None:
+        if data is None or (delegated and not data.get("rt")):
             raise HTTPException(401, "signed_out")
+        _session.set(data)
         return data
 
     Session = Annotated[dict[str, Any], Depends(session)]
@@ -346,6 +390,9 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
         if not signed.upn:
             return _back(auth_error="That account has no user principal name.")
         data = {"oid": signed.oid, "name": signed.name, "upn": signed.upn, "roles": signed.roles, "csrf": secrets.token_urlsafe(32)}
+        if delegated:
+            data |= {"sid": secrets.token_urlsafe(16), "rt": signed.refresh_token}
+            tokens.put(data["sid"], signed.access_token, signed.expires_at)
         response = _back()
         cookies.write_session(request, response, data, cfg.session_seconds)
         _log("signed in", user=signed.oid, roles=signed.roles)
@@ -353,6 +400,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
 
     @app.post("/auth/logout")
     async def logout(request: Request, data: Writable) -> Response:
+        tokens.drop(str(data.get("sid", "")))
         response = JSONResponse({"signed_out": True})
         cookies.clear_session(request, response)
         return response

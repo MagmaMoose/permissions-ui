@@ -17,7 +17,7 @@ fullnameOverride: ""
 
 azure:
   # The Entra ID tenant (a GUID) and the app registration's client id. One app signs people in
-  # and reads Microsoft Graph (User.Read.All, GroupMember.Read.All).
+  # and reads Microsoft Graph (User.Read.All, GroupMember.Read.All; see config.directory).
   tenantId: ""
   clientId: ""
   # Leave empty for the public cloud (https://login.microsoftonline.com).
@@ -43,6 +43,12 @@ config:
   # them. graph: the app also changes the Entra ID groups itself, which needs
   # GroupMember.ReadWrite.All (or Groups Administrator over an administrative unit).
   fulfilment: pull-request
+  # How Microsoft Graph is read. app: as the app itself, with User.Read.All and
+  # GroupMember.Read.All as application permissions, which only a Privileged Role Administrator
+  # can consent to. delegated: as the signed-in person, with the same permissions delegated plus
+  # offline_access, which a Cloud Application Administrator can consent to. Not with fulfilment
+  # graph: writing groups needs the app's own permission.
+  directory: app
   # auto: the app merges a request once it is approved. manual: people merge it.
   merge: auto
   # Group name prefixes to check for groups no resource describes, such as ["acl-", "k8s-"].

@@ -61,6 +61,8 @@ class Config:
     github: GitHubConfig | None = None
     catalog_dir: Path | None = None
     fulfilment: str = "pull-request"
+    # How Microsoft Graph is read: "app" as the app itself, "delegated" as the signed-in person.
+    directory: str = "app"
     auto_merge: bool = True
     group_prefixes: tuple[str, ...] = ()
     admin_role: str = "Admin"
@@ -177,6 +179,11 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         raise ConfigError("PERMISSIONS_UI_MERGE takes auto or manual")
     if fulfilment == "graph" and merge == "manual":
         raise ConfigError("PERMISSIONS_UI_FULFILMENT=graph applies on approval, so it needs PERMISSIONS_UI_MERGE=auto")
+    directory = env.get("PERMISSIONS_UI_DIRECTORY", "app").strip()
+    if directory not in ("app", "delegated"):
+        raise ConfigError("PERMISSIONS_UI_DIRECTORY takes app or delegated")
+    if fulfilment == "graph" and directory == "delegated":
+        raise ConfigError("PERMISSIONS_UI_FULFILMENT=graph changes groups as the app, so it needs PERMISSIONS_UI_DIRECTORY=app")
 
     roles = {}
     for key, default in (("admin", "Admin"), ("auditor", "Auditor")):
@@ -220,6 +227,7 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         github=_github(env) if has_repo else None,
         catalog_dir=Path(catalog_dir) if catalog_dir else None,
         fulfilment=fulfilment,
+        directory=directory,
         auto_merge=merge == "auto",
         group_prefixes=tuple(p.strip().lower() for p in env.get("PERMISSIONS_UI_GROUP_PREFIXES", "").split(",") if p.strip()),
         teams_webhook=webhook,

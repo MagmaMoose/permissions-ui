@@ -67,6 +67,7 @@ def serve() -> None:
                 "catalog": f"{cfg.github.repo}:{cfg.github.branch}/{cfg.github.root}" if cfg.github else str(cfg.catalog_dir),
                 "github_auth": ("app" if cfg.github.app_id else "token") if cfg.github else None,
                 "fulfilment": cfg.fulfilment,
+                "directory": cfg.directory,
                 "auto_merge": cfg.auto_merge,
                 "group_prefixes": list(cfg.group_prefixes) or None,
                 "teams": bool(cfg.teams_webhook),

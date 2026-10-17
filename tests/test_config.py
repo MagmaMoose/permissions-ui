@@ -6,7 +6,7 @@ from permissions_ui.config import ConfigError, load_config
 def test_the_test_environment_loads(env):
     cfg = load_config(env)
     assert cfg.github.repo == "example/access" and cfg.github.root == "access"
-    assert cfg.group_prefixes == ("acl-", "k8s-") and cfg.auto_merge and cfg.fulfilment == "pull-request"
+    assert cfg.group_prefixes == ("acl-", "k8s-") and cfg.auto_merge and cfg.fulfilment == "pull-request" and cfg.directory == "app"
     assert cfg.redirect_uri == "https://access.example.test/auth/callback"
 
 
@@ -21,6 +21,8 @@ def test_the_test_environment_loads(env):
         ({"PERMISSIONS_UI_FULFILMENT": "magic"}, "takes pull-request or graph"),
         ({"PERMISSIONS_UI_MERGE": "sometimes"}, "takes auto or manual"),
         ({"PERMISSIONS_UI_FULFILMENT": "graph", "PERMISSIONS_UI_MERGE": "manual"}, "needs PERMISSIONS_UI_MERGE=auto"),
+        ({"PERMISSIONS_UI_DIRECTORY": "person"}, "takes app or delegated"),
+        ({"PERMISSIONS_UI_DIRECTORY": "delegated", "PERMISSIONS_UI_FULFILMENT": "graph"}, "needs PERMISSIONS_UI_DIRECTORY=app"),
         ({"PERMISSIONS_UI_CATALOG_PATH": "../escape"}, "without .."),
         ({"PERMISSIONS_UI_GITHUB_API": "http://api.github.test"}, "must be https"),  # DevSkim: ignore DS137138 - deliberately invalid input; test asserts config rejects it
         ({"PERMISSIONS_UI_TEAMS_WEBHOOK": "http://hooks.example.test"}, "must be an https URL"),  # DevSkim: ignore DS137138 - deliberately invalid input; test asserts config rejects it
