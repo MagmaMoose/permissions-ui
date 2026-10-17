@@ -54,6 +54,9 @@ teams/*.yaml       leads, and the roles a new member gets
 grants/<upn>.yaml  one file per person, written by permissions-ui
 ```
 
+People are named by their user principal name in your directory, as Graph shows it. For a guest
+that is the `…#EXT#@…` one, not the address they sign in with.
+
 ```yaml
 # resources/kubernetes.yaml
 - id: k8s-prd-cluster-admin

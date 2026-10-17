@@ -1,6 +1,8 @@
 import asyncio
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
+import pytest
 import yaml
 from conftest import EXAMPLE, TODAY, make_client, oid, sign_in, write_headers
 
@@ -35,6 +37,28 @@ def test_me_says_what_the_person_may_see(client, world):
     me = sign_in(client, world, "alan.turing@example.com")
     assert me["lead_of"] == [] and not me["sees_everyone"]
     assert sign_in(client, world, "auditor@example.com", ["Auditor"])["sees_everyone"]
+
+
+@pytest.mark.parametrize("directory", ["app", "delegated"])
+def test_a_guest_is_known_by_their_user_principal_name_here(world, env, directory):
+    guest = "ada.byron_example.org#ext#@example.com"
+    world.graph.add_user(guest, "Ada Byron")
+    world.entra.guests[guest] = "ada.byron@example.org"
+    client = make_client(world, {**env, "PERMISSIONS_UI_DIRECTORY": directory})
+    me = sign_in(client, world, guest)
+    assert me["upn"] == guest
+    response = ask(client, me, person=guest, items=[{"resource": "grafana-viewer"}], reason="dashboards")
+    assert response.status_code == 201, response.text
+    assert response.json()["person"] == guest
+
+
+def test_someone_the_directory_does_not_know_is_not_signed_in(client, world):
+    world.entra.user = "nobody@example.com"
+    query = parse_qs(urlsplit(client.get("/auth/login").headers["location"]).query)
+    world.entra.challenge, world.entra.nonce = query["code_challenge"][0], query["nonce"][0]
+    callback = client.get("/auth/callback", params={"code": "good-code", "state": query["state"][0]})
+    assert "That+account+is+not+in+the+directory" in callback.headers["location"]
+    assert client.get("/api/me").status_code == 401
 
 
 def test_the_catalog_lists_resources_roles_and_teams(client, world):

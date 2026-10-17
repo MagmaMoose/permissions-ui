@@ -65,6 +65,8 @@ class FakeEntra:
     # (status, error) for every refresh: (400, "invalid_grant") is a revoked or expired one.
     refresh_error: tuple[int, str] | None = None
     issued: int = 0
+    # Guests, by their userPrincipalName here: their ID token names them by their home address.
+    guests: dict[str, str] = field(default_factory=dict)
 
     def person_token(self, upn: str, scope: str) -> str:
         """A delegated token. Graph takes it only when it was asked for with Graph's scopes."""
@@ -87,7 +89,7 @@ class FakeEntra:
             "tid": TENANT,
             "oid": oid(self.user),
             "name": PEOPLE.get(self.user, self.user),
-            "preferred_username": self.user,
+            "preferred_username": self.guests.get(self.user, self.user),
             "roles": self.roles,
         }
         return jwt.encode(claims, KEY, algorithm="RS256", headers={"kid": "test-key"})

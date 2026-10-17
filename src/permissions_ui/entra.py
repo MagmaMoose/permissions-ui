@@ -62,7 +62,6 @@ class Entra(OIDC):
         return SignIn(
             oid=str(claims["oid"]).lower(),
             name=str(claims.get("name") or "")[:120],
-            upn=str(claims.get("preferred_username") or "").lower()[:120],
             roles=[r for r in claims.get("roles") or [] if isinstance(r, str)],
             access_token=str(body.get("access_token") or ""),
             expires_at=time.time() + int(body.get("expires_in") or 3600),

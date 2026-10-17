@@ -37,7 +37,6 @@ class SignInError(Exception):
 class SignIn:
     oid: str
     name: str
-    upn: str
     roles: list[Any]
     access_token: str = ""
     expires_at: float = 0.0

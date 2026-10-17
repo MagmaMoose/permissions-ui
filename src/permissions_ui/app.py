@@ -387,12 +387,21 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
         except SignInError as err:
             _log("sign-in failed", status=err.status, reason=str(err))
             return _back(auth_error=str(err))
-        if not signed.upn:
-            return _back(auth_error="That account has no user principal name.")
-        data = {"oid": signed.oid, "name": signed.name, "upn": signed.upn, "roles": signed.roles, "csrf": secrets.token_urlsafe(32)}
+        data = {"oid": signed.oid, "name": signed.name, "roles": signed.roles, "csrf": secrets.token_urlsafe(32)}
         if delegated:
             data |= {"sid": secrets.token_urlsafe(16), "rt": signed.refresh_token}
             tokens.put(data["sid"], signed.access_token, signed.expires_at)
+        # The catalog and Graph name people by their userPrincipalName here. A guest's ID token
+        # names them by their home tenant's name instead, which matches nothing.
+        _session.set(data)
+        try:
+            user = await directory.user(signed.oid)
+        except DirectoryError as err:
+            _log("sign-in lookup failed", user=signed.oid, reason=str(err))
+            return _back(auth_error=f"Cannot find you in the directory: {err}")
+        if user is None or not user.upn:
+            return _back(auth_error="That account is not in the directory.")
+        data["upn"] = user.upn
         response = _back()
         cookies.write_session(request, response, data, cfg.session_seconds)
         _log("signed in", user=signed.oid, roles=signed.roles)
