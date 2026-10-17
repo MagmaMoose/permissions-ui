@@ -69,12 +69,12 @@ export function ResourceView({ id }: { id: string }) {
               {data.drift.extra.map((upn, i) => (
                 <span key={upn}>
                   {i > 0 && ", "}
-                  <Person upn={upn} />
+                  <Person upn={upn} name={data.names?.[upn]} />
                 </span>
               ))}
             </p>
           )}
-          {data.drift && data.drift.missing.length > 0 && <p className="notice">Granted, not in the group yet: {data.drift.missing.join(", ")}.</p>}
+          {data.drift && data.drift.missing.length > 0 && <p className="notice">Granted, not in the group yet: {data.drift.missing.map((u) => data.names?.[u] || u).join(", ")}.</p>}
           {data.holder_list.length === 0 ? (
             <p className="muted">Nobody.</p>
           ) : (
@@ -83,7 +83,7 @@ export function ResourceView({ id }: { id: string }) {
                 {data.holder_list.map((h) => (
                   <tr key={h.upn}>
                     <td className="name">
-                      <Person upn={h.upn} />
+                      <Person upn={h.upn} name={data.names?.[h.upn]} />
                     </td>
                     <td>{h.via.map((v) => (v === "direct" ? "direct" : `role ${v}`)).join(", ")}</td>
                     <td>{h.expires ?? "no end date"}</td>

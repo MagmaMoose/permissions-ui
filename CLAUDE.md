@@ -24,8 +24,10 @@ image, a Helm chart (`charts/permissions-ui`) and a reference OpenTofu module
 - **No `from __future__ import annotations` in `app.py`.** The routes use `Annotated` aliases
   defined inside `create_app`; postponed annotations turn them into unresolvable strings and
   FastAPI reads `data` as a required query parameter: every route answers 422.
-- **A grants file must be `grants/<lowercased upn>.yaml`.** The loader refuses anything else, and
-  a refused catalog stops every request until it is fixed.
+- **A grants file must be `grants/<short name>.yaml`, or `grants/<lowercased upn>.yaml` when
+  someone else has the short name** (`short_name`, `person_files`). The loader refuses anything
+  else, and a refused catalog stops every request until it is fixed. Write through
+  `Catalog.file_for`, which keeps a person's existing file.
 - **The expiry CronJob's pods must not carry `app.kubernetes.io/component: web`.** That label is
   the Service and PodDisruptionBudget selector; a job pod with it receives traffic.
 - **The page may hold no inline script or style.** The CSP blocks it and the page renders blank;

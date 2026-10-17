@@ -56,8 +56,8 @@ export function Requests({ tab }: { tab: string }) {
                     {r.items.map((i) => i.name).join(", ")}
                   </a>
                 </td>
-                <td>{r.person}</td>
-                <td>{r.requested_by}</td>
+                <td title={r.person}>{r.names[r.person] || r.person}</td>
+                <td title={r.requested_by}>{r.names[r.requested_by] || r.requested_by}</td>
                 <td>
                   <StateBadge req={r} />
                 </td>

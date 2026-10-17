@@ -1,4 +1,5 @@
 person: grace.hopper@example.com
+name: Grace Hopper
 grants:
 - role: platform-engineer
   reason: Platform team lead

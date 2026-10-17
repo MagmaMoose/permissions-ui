@@ -1,4 +1,5 @@
 person: ada.lovelace@example.com
+name: Ada Lovelace
 grants:
 - role: payments-developer
   reason: Joined the payments team

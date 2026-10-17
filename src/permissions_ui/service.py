@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from . import requests as rq
-from .catalog import Catalog, PersonGrants, dump_person, load_catalog, person_file
+from .catalog import Catalog, PersonGrants, dump_person, load_catalog
 from .directory import Directory
 from .github import GitHub, GitHubError, PullRequest
 from .notify import Notifier
@@ -198,11 +198,11 @@ class Portal:
             expires = limit
 
         need_list = needs(catalog, items)
-        meta = {"version": 1, "kind": "grant", "person": person, "items": items, "reason": reason, "requested_by": actor.upn, "expires": expires.isoformat() if expires else None}
-        changed = rq.apply_grants(catalog.people.get(person), person, items, reason=reason, requested_by=actor.upn, expires=expires, today=today)
-        title = rq.title(catalog, "grant", person, items)
+        meta = {"version": 1, "kind": "grant", "person": person, "name": user.name, "items": items, "reason": reason, "requested_by": actor.upn, "expires": expires.isoformat() if expires else None}
+        changed = rq.apply_grants(catalog.people.get(person), person, items, reason=reason, requested_by=actor.upn, expires=expires, today=today, name=user.name)
+        title = rq.title(catalog, "grant", person, items, user.name)
         branch = rq.branch_name(person)
-        await github.commit(branch, {person_file(person): dump_person(changed)}, title)
+        await github.commit(branch, {catalog.file_for(person): dump_person(changed)}, title)
         privileged = any(catalog.resources[rid].tier == "privileged" for rid in wanted)
         pull = await self._open(github, branch, title, rq.body(catalog, meta, need_list, self._origin), meta, [rq.LABEL, "access:pending", *(["tier:privileged"] if privileged else [])])
         _log("request opened", number=pull.number, person=person, by=actor.upn, items=items)
@@ -219,7 +219,7 @@ class Portal:
             return await self.request(pull.number)
         await self._notifier.send(
             f"Access request #{pull.number} needs approval",
-            {"For": person, "Asks for": rq.describe(catalog, items), "By": actor.upn, "Why": reason, "Approvers": ", ".join(sorted({s for n in req.outstanding for s in n.approvers}))},
+            {"For": rq.label(user.name, person), "Asks for": rq.describe(catalog, items), "By": actor.upn, "Why": reason, "Approvers": ", ".join(sorted({s for n in req.outstanding for s in n.approvers}))},
             f"{self._origin}/#/requests/{pull.number}",
             "Review",
         )
@@ -242,11 +242,11 @@ class Portal:
             if missing:
                 raise PortalError(400, "not_held", f"{person} does not hold that.")
         listed = items if items is not None else [{"role": g.role} if g.role else {"resource": str(g.resource)} for g in current.grants]
-        meta = {"version": 1, "kind": "revoke", "person": person, "items": listed, "everything": items is None, "reason": reason, "requested_by": actor.upn, "expires": None}
-        title = rq.title(catalog, "revoke", person, listed)
+        meta = {"version": 1, "kind": "revoke", "person": person, "name": current.name, "items": listed, "everything": items is None, "reason": reason, "requested_by": actor.upn, "expires": None}
+        title = rq.title(catalog, "revoke", person, listed, current.name)
         branch = rq.branch_name(person)
         left = rq.remove_grants(current, items)
-        await github.commit(branch, {person_file(person): dump_person(left) if left else None}, title)
+        await github.commit(branch, {catalog.file_for(person): dump_person(left) if left else None}, title)
         pull = await self._open(github, branch, title, rq.body(catalog, meta, [], self._origin), meta, [rq.LABEL, "access:approved", "access:removal"])
         _log("removal opened", number=pull.number, person=person, by=actor.upn, everything=items is None)
         req = await self.request(pull.number)
@@ -377,13 +377,13 @@ class Portal:
 
         if req.kind == "grant":
             expires = date.fromisoformat(req.expires) if req.expires else None
-            changed: PersonGrants | None = rq.apply_grants(current, req.person, items, reason=req.reason, requested_by=req.requested_by, expires=expires, today=today)
+            changed: PersonGrants | None = rq.apply_grants(current, req.person, items, reason=req.reason, requested_by=req.requested_by, expires=expires, today=today, name=req.person_name)
             changed = rq.finalise(changed, items, [a.upn for a in req.approvals], req.number)  # type: ignore[arg-type]
         else:
             everything = bool(self._records.read(pull.body, "request", req.number)[-1].get("everything"))
             changed = rq.remove_grants(current, None if everything else items) if current else None
         content = dump_person(changed) if changed else None
-        built = await github.commit(pull.head, {person_file(req.person): content}, f"{pull.title} (#{req.number})", replace=True)
+        built = await github.commit(pull.head, {catalog.file_for(req.person): content}, f"{pull.title} (#{req.number})", replace=True)
         await github.label(req.number, ["access:approved"], ("access:pending",))
         if not self._auto_merge:
             await github.comment(req.number, "Approved. This repository merges access requests by hand.")
@@ -407,11 +407,11 @@ class Portal:
         if self._fulfilment == "graph":
             await self._apply(catalog, req.person, before, after)
         if req.kind == "grant":
-            await self._notifier.send(f"Access granted: #{req.number}", {"For": req.person, "Granted": rq.describe(catalog, items)}, f"{self._origin}/#/people/{req.person}")
+            await self._notifier.send(f"Access granted: #{req.number}", {"For": rq.label(changed.name if changed else req.person_name, req.person), "Granted": rq.describe(catalog, items)}, f"{self._origin}/#/people/{req.person}")
             if manual:
                 await self._notifier.send(
                     f"Set up access by hand: #{req.number}",
-                    {"For": req.person, "Systems": ", ".join(catalog.resources[r].name for r in manual)},
+                    {"For": rq.label(changed.name if changed else req.person_name, req.person), "Systems": ", ".join(catalog.resources[r].name for r in manual)},
                     f"{self._origin}/#/tasks",
                     "Open tasks",
                 )

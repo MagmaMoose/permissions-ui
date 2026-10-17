@@ -4,7 +4,8 @@
                        system someone sets up by hand
     roles/*.yaml       a named bundle of resources ("Backend developer")
     teams/*.yaml       a team's leads and the roles a new member gets
-    grants/<upn>.yaml  one file per person: what they hold, why, who approved it, until when
+    grants/<name>.yaml one file per person, named for them: what they hold, why, who approved
+                       it, until when
 
 The Git history of these files is the record of who had what and when. Everything here is
 plain data with no I/O: the loader takes {path: text}, so the same code reads a local
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal
 
@@ -142,6 +143,7 @@ class Grant(_Model):
 
 class PersonGrants(_Model):
     person: str
+    name: str = ""
     grants: list[Grant] = Field(default_factory=list)
 
     @field_validator("person")
@@ -157,9 +159,19 @@ def _upn(value: str) -> str:
     return value
 
 
-def person_file(upn: str) -> str:
-    """Where a person's grants live: one file each, so two requests rarely touch the same file."""
-    return f"grants/{re.sub(r'[^a-z0-9._@-]', '_', _upn(upn))}.yaml"
+def short_name(upn: str) -> str:
+    """The person part of a UPN: jane.doe for jane.doe@example.com, and for a guest
+    (jane.doe_home.example#ext#@tenant.example) the name their home tenant gives them."""
+    local = str(upn).strip().lower().split("@")[0]
+    if "#ext#" in local:
+        local = local.split("#ext#")[0].rsplit("_", 1)[0]
+    return re.sub(r"[^a-z0-9._-]", "_", local) or "person"
+
+
+def person_files(upn: str) -> tuple[str, str]:
+    """Where a person's grants may live, one file each: their short name, or their whole UPN
+    when someone else has the short name."""
+    return f"grants/{short_name(upn)}.yaml", f"grants/{re.sub(r'[^a-z0-9._@-]', '_', _upn(upn))}.yaml"
 
 
 @dataclass(frozen=True)
@@ -181,6 +193,15 @@ class Catalog:
     roles: dict[str, Role]
     teams: dict[str, Team]
     people: dict[str, PersonGrants]
+    files: dict[str, str] = field(default_factory=dict)
+
+    def file_for(self, upn: str) -> str:
+        """The person's grants file: the one they have, else their short name unless it is taken."""
+        upn = _upn(upn)
+        if upn in self.files:
+            return self.files[upn]
+        short, full = person_files(upn)
+        return full if short in {p.replace(".yml", ".yaml") for p in self.files.values()} else short
 
     def holdings(self, upn: str, today: date) -> dict[str, Holding]:
         """What a person holds today, by resource id, through roles and direct grants alike."""
@@ -241,6 +262,7 @@ def load_catalog(files: Mapping[str, str]) -> Catalog:
     roles: dict[str, Role] = {}
     teams: dict[str, Team] = {}
     people: dict[str, PersonGrants] = {}
+    paths: dict[str, str] = {}
     kinds = {"resources/": (Resource, resources), "roles/": (Role, roles), "teams/": (Team, teams)}
 
     for path in sorted(files):
@@ -259,12 +281,14 @@ def load_catalog(files: Mapping[str, str]) -> Catalog:
             try:
                 if folder == "grants/":
                     person = PersonGrants.model_validate(doc)
-                    if person_file(person.person) != path.replace(".yml", ".yaml"):
-                        problems.append(f"{path}: grants for {person.person} belong in {person_file(person.person)}")
+                    allowed = person_files(person.person)
+                    if path.replace(".yml", ".yaml") not in allowed:
+                        problems.append(f"{path}: grants for {person.person} belong in {allowed[0]}")
                     elif person.person in people:
                         problems.append(f"{path}: {person.person} has a second grants file")
                     else:
                         people[person.person] = person
+                        paths[person.person] = path
                     continue
                 model, into = kinds[folder]
                 entry = model.model_validate(doc)
@@ -288,16 +312,16 @@ def load_catalog(files: Mapping[str, str]) -> Catalog:
         seen: set[str] = set()
         for grant in person.grants:
             if grant.role and grant.role not in roles:
-                problems.append(f"{person_file(person.person)}: role {grant.role} is not a role")
+                problems.append(f"{paths[person.person]}: role {grant.role} is not a role")
             if grant.resource and grant.resource not in resources:
-                problems.append(f"{person_file(person.person)}: resource {grant.resource} is not a resource")
+                problems.append(f"{paths[person.person]}: resource {grant.resource} is not a resource")
             if grant.key in seen:
-                problems.append(f"{person_file(person.person)}: {grant.key} is granted twice")
+                problems.append(f"{paths[person.person]}: {grant.key} is granted twice")
             seen.add(grant.key)
 
     if problems:
         raise CatalogError(problems)
-    return Catalog(resources=resources, roles=roles, teams=teams, people=people)
+    return Catalog(resources=resources, roles=roles, teams=teams, people=people, files=paths)
 
 
 def _approver_refs(where: str, specs: list[str], teams: Mapping[str, Team]) -> list[str]:
@@ -311,4 +335,5 @@ def dump_person(person: PersonGrants) -> str:
         data = grant.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
         data.setdefault("granted", grant.granted.isoformat())
         grants.append(data)
-    return yaml.safe_dump({"person": person.person, "grants": grants}, sort_keys=False, allow_unicode=True, width=100)
+    head = {"person": person.person, **({"name": person.name} if person.name else {})}
+    return yaml.safe_dump({**head, "grants": grants}, sort_keys=False, allow_unicode=True, width=100)

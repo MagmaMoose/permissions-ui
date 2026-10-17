@@ -26,6 +26,7 @@ class Drift:
     missing: tuple[str, ...] = ()
     extra: tuple[str, ...] = ()
     members: int = 0
+    names: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -47,9 +48,11 @@ async def resource_drift(catalog: Catalog, directory: Directory, resource_id: st
     group = await directory.group(resource.target)
     if group is None:
         return Drift(resource_id, group_found=False, missing=tuple(sorted(catalog.holders(resource_id, today))))
-    actual = {u.upn for u in await directory.members(group.id)}
+    members = await directory.members(group.id)
+    actual = {u.upn for u in members}
     granted = set(catalog.holders(resource_id, today))
-    return Drift(resource_id, True, tuple(sorted(granted - actual)), tuple(sorted(actual - granted)), len(actual))
+    extra = actual - granted
+    return Drift(resource_id, True, tuple(sorted(granted - actual)), tuple(sorted(extra)), len(actual), {u.upn: u.name for u in members if u.upn in extra and u.name})
 
 
 async def all_drift(catalog: Catalog, directory: Directory, today: date) -> list[Drift]:

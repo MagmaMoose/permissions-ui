@@ -51,11 +51,14 @@ A folder of YAML in a repository you own (see [`examples/catalog`](examples/cata
 resources/*.yaml   what access is granted to
 roles/*.yaml       bundles of resources
 teams/*.yaml       leads, and the roles a new member gets
-grants/<upn>.yaml  one file per person, written by permissions-ui
+grants/<name>.yaml one file per person, written by permissions-ui
 ```
 
 People are named by their user principal name in your directory, as Graph shows it. For a guest
-that is the `…#EXT#@…` one, not the address they sign in with.
+that is the `…#EXT#@…` one, not the address they sign in with. A grants file is named for the
+person part of it (`grants/jane.doe.yaml` for `jane.doe@example.com`, and for a guest the name
+their home tenant gives them), or the whole UPN when someone else has that name already. Its
+`name:` is the person's display name, which permissions-ui writes each time it changes the file.
 
 ```yaml
 # resources/kubernetes.yaml

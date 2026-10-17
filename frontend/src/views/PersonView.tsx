@@ -32,7 +32,7 @@ export function PersonView({ upn }: { upn: string }) {
   return (
     <>
       <div className="page-head">
-        <h1>{data.user?.name || upn}</h1>
+        <h1>{data.user?.name || data.name || upn}</h1>
         <p className="muted">
           {upn}
           {data.user && (data.user.job || data.user.department) && ` · ${[data.user.job, data.user.department].filter(Boolean).join(", ")}`}

@@ -49,7 +49,7 @@ export function Tasks() {
                     {r.name} <a href={`#/requests/${t.request.number}`}>#{t.request.number}</a>
                   </td>
                   <td>
-                    <Person upn={t.request.person} />
+                    <Person upn={t.request.person} name={t.request.names[t.request.person]} />
                   </td>
                   <td>{r.instructions}</td>
                   <td className="actions-cell">

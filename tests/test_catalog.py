@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 from conftest import EXAMPLE
 
-from permissions_ui.catalog import CatalogError, PersonGrants, dump_person, load_catalog, person_file
+from permissions_ui.catalog import CatalogError, PersonGrants, dump_person, load_catalog, person_files, short_name
 
 
 def files(**extra: str) -> dict[str, str]:
@@ -44,22 +44,33 @@ def test_every_problem_is_reported_at_once():
     text = " | ".join(err.value.problems)
     assert "role ghost: resource nope is not a resource" in text
     assert "team qa is defined twice" in text
-    assert "belong in grants/other@example.com.yaml" in text
+    assert "belong in grants/other.yaml" in text
     assert "a manual resource needs fulfillers" in text
 
 
 def test_a_grant_names_a_role_or_a_resource_not_both():
     bad = "person: ada.lovelace@example.com\ngrants:\n- role: qa-tester\n  resource: vpn\n  reason: x\n  granted: '2026-01-01'\n"
     with pytest.raises(CatalogError) as err:
-        load_catalog(files(**{"grants/ada.lovelace@example.com.yaml": bad}))
+        load_catalog(files(**{"grants/ada.lovelace.yaml": bad}))
     assert "either a resource or a role" in str(err.value)
 
 
-def test_person_files_are_one_per_person_and_stable():
-    assert person_file("Ada.Lovelace@Example.com") == "grants/ada.lovelace@example.com.yaml"
+def test_person_files_are_named_for_the_person_and_stable():
+    assert person_files("Ada.Lovelace@Example.com") == ("grants/ada.lovelace.yaml", "grants/ada.lovelace@example.com.yaml")
+    assert short_name("Jan_de.Vries_home.example#EXT#@tenant.onmicrosoft.com") == "jan_de.vries"
     catalog = load_catalog(files())
     text = dump_person(catalog.people["grace.hopper@example.com"])
+    assert text.startswith("person: grace.hopper@example.com\nname: Grace Hopper\n")
     assert text.index("resource: k8s-prd-cluster-admin") < text.index("role: platform-engineer")
-    reloaded = load_catalog(files(**{"grants/grace.hopper@example.com.yaml": text})).people["grace.hopper@example.com"]
+    reloaded = load_catalog(files(**{"grants/grace.hopper.yaml": text})).people["grace.hopper@example.com"]
+    assert reloaded == catalog.people["grace.hopper@example.com"].model_copy(update={"grants": reloaded.grants})
     assert sorted(reloaded.grants, key=lambda g: g.key) == sorted(catalog.people["grace.hopper@example.com"].grants, key=lambda g: g.key)
     assert dump_person(PersonGrants(person="x@example.com")) == "person: x@example.com\ngrants: []\n"
+
+
+def test_a_short_name_someone_else_has_falls_back_to_the_whole_upn():
+    catalog = load_catalog(files(**{"grants/ada.lovelace@example.org.yaml": "person: ada.lovelace@example.org\ngrants: []\n"}))
+    assert catalog.file_for("Ada.Lovelace@example.com") == "grants/ada.lovelace.yaml"
+    assert catalog.file_for("ada.lovelace@example.org") == "grants/ada.lovelace@example.org.yaml"
+    assert catalog.file_for("ada.lovelace@example.net") == "grants/ada.lovelace@example.net.yaml"
+    assert catalog.file_for("new.person@example.com") == "grants/new.person.yaml"

@@ -77,7 +77,7 @@ export function Home() {
                 <li key={r.number}>
                   <a href={`#/requests/${r.number}`}>
                     #{r.number} {r.kind === "revoke" ? "Remove" : ""} {r.items.map((i) => i.name).join(", ")}
-                    {r.person !== me.upn && ` for ${r.person}`}
+                    {r.person !== me.upn && ` for ${r.names[r.person] || r.person}`}
                   </a>{" "}
                   <StateBadge req={r} /> <span className="muted small">{when(Date.parse(r.created) / 1000)}</span>
                 </li>

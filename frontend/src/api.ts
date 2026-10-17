@@ -42,7 +42,11 @@ export type Resource = {
   holders: number;
   holder_list?: { upn: string; via: string[]; expires: string | null }[];
   drift?: { group_found: boolean; missing: string[]; extra: string[]; members: number } | null;
+  names?: Names;
 };
+
+// Display names by user principal name, for the people a response mentions.
+export type Names = Record<string, string>;
 
 export type Role = { id: string; name: string; description: string; resources: string[]; approvers: string[]; max_days: number | null; teams: string[] };
 export type Team = { id: string; name: string; description: string; leads: string[]; roles: string[] };
@@ -60,6 +64,7 @@ export type Overview = {
   drift: { resource: string; name: string; group_found: boolean; missing: string[]; extra: string[] }[];
   undocumented: { id: string; name: string; description: string }[];
   group_prefixes: string[];
+  names: Names;
 };
 
 export type PersonRow = { upn: string; tiers: Record<Tier, number>; privileged: number; expiring: number; conflicts: number; grants: number };
@@ -67,6 +72,7 @@ export type DirectoryUser = { upn: string; name: string; job: string; department
 
 export type Person = {
   upn: string;
+  name: string;
   user: { name: string; mail: string; job: string; department: string; enabled: boolean } | null;
   teams: string[];
   grants: { role: string | null; resource: string | null; reason: string; granted: string; expires: string | null; approved_by: string[]; request: number | null; active: boolean }[];
@@ -84,6 +90,7 @@ export type AccessRequest = {
   url: string;
   kind: "grant" | "revoke";
   person: string;
+  names: Names;
   items: (Item & { name: string })[];
   resources: { id: string; name: string; tier: Tier; kind: Kind }[];
   reason: string;
@@ -152,7 +159,7 @@ export const api = {
   logout: () => request<unknown>("POST", "/auth/logout"),
   catalog: () => request<Catalog>("GET", "/api/catalog"),
   overview: () => request<Overview>("GET", "/api/overview"),
-  people: (q = "") => request<{ people: PersonRow[]; directory: DirectoryUser[] }>("GET", `/api/people${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  people: (q = "") => request<{ people: PersonRow[]; directory: DirectoryUser[]; names: Names }>("GET", `/api/people${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   person: (upn: string) => request<Person>("GET", `/api/people/${encodeURIComponent(upn)}`),
   resource: (id: string) => request<Resource>("GET", `/api/resources/${encodeURIComponent(id)}`),
   searchUsers: (q: string) => request<{ users: DirectoryUser[] }>("GET", `/api/directory/users?q=${encodeURIComponent(q)}`).then((r) => r.users),
