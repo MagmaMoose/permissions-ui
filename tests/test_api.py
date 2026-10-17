@@ -12,8 +12,8 @@ from permissions_ui.github import GitHub, GitHubError
 
 
 def grants_on_main(world, person: str) -> dict:
-    text = world.github.files().get(f"access/grants/{person}.yaml")
-    return yaml.safe_load(text) if text else {}
+    found = [d for path, text in world.github.files().items() if path.startswith("access/grants/") and (d := yaml.safe_load(text)) and d.get("person") == person]
+    return found[0] if found else {}
 
 
 def ask(client, me, **body):
@@ -209,7 +209,7 @@ def test_removing_access_merges_at_once(client, world):
     me = sign_in(client, world, "ada.lovelace@example.com")
     out = client.post("/api/removals", json={"person": me["upn"], "items": None, "reason": "Leaving the team"}, headers=write_headers(me)).json()
     assert out["state"] == "granted" and out["kind"] == "revoke"
-    assert "access/grants/ada.lovelace@example.com.yaml" not in world.github.files()
+    assert "access/grants/ada.lovelace.yaml" not in world.github.files()
 
 
 def test_a_lead_onboarding_someone_approves_it_by_asking(client, world):
@@ -271,7 +271,7 @@ def test_the_merge_github_refuses_while_it_catches_up_with_the_rebuild_is_tried_
 def test_a_commit_pushed_onto_the_branch_after_the_rebuild_is_never_merged(client, world):
     me = sign_in(client, world, "alan.turing@example.com")
     req = ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").json()
-    world.github.intruder = {f"access/grants/{me['upn']}.yaml": "grants:\n- resource: k8s-prd-cluster-admin\n"}
+    world.github.intruder = {"access/grants/alan.turing.yaml": "person: alan.turing@example.com\ngrants:\n- resource: k8s-prd-cluster-admin\n"}
     lead = sign_in(client, world, "grace.hopper@example.com")
     assert client.post(f"/api/requests/{req['number']}/approve", headers=write_headers(lead)).json()["state"] == "approved"
     assert grants_on_main(world, me["upn"]) == {}
@@ -309,3 +309,18 @@ def test_expire_removes_lapsed_grants(world, env):
     assert len(opened) == 1
     grants = grants_on_main(world, "grace.hopper@example.com")["grants"]
     assert [g.get("role") for g in grants] == ["platform-engineer"]
+
+
+def test_people_are_shown_and_filed_by_name(client, world):
+    me = sign_in(client, world, "alan.turing@example.com")
+    req = ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").json()
+    assert req["names"] == {me["upn"]: "Alan Turing"}
+    pull = world.github.pulls[req["number"]]
+    assert pull["title"] == "Grant Grafana, viewer to Alan Turing" and pull["head"].startswith("chore/access-alan-turing-")
+    assert "for Alan Turing (`alan.turing@example.com`)" in pull["body"]
+    lead = sign_in(client, world, "grace.hopper@example.com")
+    assert client.post(f"/api/requests/{req['number']}/approve", headers=write_headers(lead)).json()["state"] == "granted"
+    assert yaml.safe_load(world.github.files()["access/grants/alan.turing.yaml"])["name"] == "Alan Turing"
+    names = client.get("/api/people").json()["names"]
+    assert names["alan.turing@example.com"] == "Alan Turing" and names["ada.lovelace@example.com"] == "Ada Lovelace"
+    assert client.get("/api/people/alan.turing@example.com").json()["name"] == "Alan Turing"

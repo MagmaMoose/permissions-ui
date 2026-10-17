@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { api } from "../api";
-import { Loading, Tiers, useLoad } from "../components/ui";
+import { Loading, Person, Tiers, useLoad } from "../components/ui";
 
 export function People() {
   const [filter, setFilter] = useState("");
   const [query, setQuery] = useState("");
   const { data, error } = useLoad(() => api.people(query), [query]);
-  const rows = (data?.people ?? []).filter((p) => p.upn.includes(filter.toLowerCase()));
+  const label = (upn: string) => data?.names[upn] || upn;
+  const rows = (data?.people ?? []).filter((p) => `${label(p.upn)} ${p.upn}`.toLowerCase().includes(filter.toLowerCase()));
 
   return (
     <>
@@ -49,11 +50,11 @@ export function People() {
             </thead>
             <tbody>
               {rows
-                .sort((a, b) => b.tiers.privileged - a.tiers.privileged || b.tiers.elevated - a.tiers.elevated || a.upn.localeCompare(b.upn))
+                .sort((a, b) => b.tiers.privileged - a.tiers.privileged || b.tiers.elevated - a.tiers.elevated || label(a.upn).localeCompare(label(b.upn)))
                 .map((p) => (
                   <tr key={p.upn}>
                     <td className="name">
-                      <a href={`#/people/${encodeURIComponent(p.upn)}`}>{p.upn}</a>
+                      <Person upn={p.upn} name={data.names[p.upn]} />
                     </td>
                     <td>
                       <Tiers tiers={p.tiers} />

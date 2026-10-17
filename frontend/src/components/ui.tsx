@@ -79,10 +79,10 @@ export function upnName(upn: string) {
   return upn.split("@")[0].replace(/[._]/g, " ");
 }
 
-export function Person({ upn }: { upn: string }) {
+export function Person({ upn, name }: { upn: string; name?: string }) {
   return (
     <a href={`#/people/${encodeURIComponent(upn)}`} title={upn}>
-      {upn}
+      {name || upn}
     </a>
   );
 }

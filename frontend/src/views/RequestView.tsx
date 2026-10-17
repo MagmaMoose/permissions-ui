@@ -36,7 +36,7 @@ export function RequestView({ number }: { number: number }) {
           {data.items.map((i) => i.name).join(", ")}
         </h1>
         <p className="muted">
-          For <Person upn={data.person} />, asked by {data.requested_by} on {when(Date.parse(data.created) / 1000, true)}
+          For <Person upn={data.person} name={data.names[data.person]} />, asked by <Person upn={data.requested_by} name={data.names[data.requested_by]} /> on {when(Date.parse(data.created) / 1000, true)}
           {data.expires && ` · until ${data.expires}`}
         </p>
         <div className="actions">

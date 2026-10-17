@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
-from .catalog import Catalog, Grant, PersonGrants, person_file
+from .catalog import Catalog, Grant, PersonGrants, short_name
 from .github import PullRequest
 from .policy import Need, outstanding
 
@@ -88,12 +88,17 @@ class Request:
     decline_reason: str = ""
     done: tuple[str, ...] = ()
     labels: tuple[str, ...] = field(default_factory=tuple)
+    person_name: str = ""
 
 
 def branch_name(person: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", person.split("@")[0].lower()).strip("-")[:40] or "person"
+    slug = re.sub(r"[^a-z0-9]+", "-", short_name(person)).strip("-")[:40] or "person"
     # <type>/<description>, the branch naming release tooling enforces on every pull request.
     return f"chore/access-{slug}-{secrets.token_hex(3)}"
+
+
+def label(name: str, upn: str) -> str:
+    return f"{name} ({upn})" if name else upn
 
 
 def describe(catalog: Catalog, items: list[dict[str, str]]) -> str:
@@ -106,15 +111,16 @@ def describe(catalog: Catalog, items: list[dict[str, str]]) -> str:
     return ", ".join(names) if len(names) <= 3 else f"{', '.join(names[:3])} and {len(names) - 3} more"
 
 
-def title(catalog: Catalog, kind: str, person: str, items: list[dict[str, str]]) -> str:
+def title(catalog: Catalog, kind: str, person: str, items: list[dict[str, str]], name: str = "") -> str:
     verb = "Grant" if kind == "grant" else "Remove"
-    return f"{verb} {describe(catalog, items)} {'to' if kind == 'grant' else 'from'} {person}"[:250]
+    return f"{verb} {describe(catalog, items)} {'to' if kind == 'grant' else 'from'} {name or person}"[:250]
 
 
 def body(catalog: Catalog, meta: dict[str, Any], need_list: list[Need], origin: str) -> str:
     """The pull request body for people. The request record follows once the number is known."""
+    person = f"{meta['name']} (`{meta['person']}`)" if meta.get("name") else f"`{meta['person']}`"
     lines = [
-        f"**{'Access request' if meta['kind'] == 'grant' else 'Removal'}** for `{meta['person']}`, by `{meta['requested_by']}`.",
+        f"**{'Access request' if meta['kind'] == 'grant' else 'Removal'}** for {person}, by `{meta['requested_by']}`.",
         "",
         f"> {meta['reason']}",
         "",
@@ -136,7 +142,7 @@ def body(catalog: Catalog, meta: dict[str, Any], need_list: list[Need], origin: 
     return "\n".join(lines)
 
 
-def apply_grants(current: PersonGrants | None, person: str, items: list[dict[str, str]], *, reason: str, requested_by: str, expires: date | None, today: date) -> PersonGrants:
+def apply_grants(current: PersonGrants | None, person: str, items: list[dict[str, str]], *, reason: str, requested_by: str, expires: date | None, today: date, name: str = "") -> PersonGrants:
     """The person's grants with these items added; an item they hold already is renewed."""
     keys = {f"role:{i['role']}" if i.get("role") else f"resource:{i['resource']}" for i in items}
     kept = [g for g in (current.grants if current else []) if g.key not in keys]
@@ -144,7 +150,7 @@ def apply_grants(current: PersonGrants | None, person: str, items: list[dict[str
         Grant(role=i.get("role") or None, resource=i.get("resource") or None, reason=reason, requested_by=requested_by, granted=today, expires=expires)
         for i in items
     ]
-    return PersonGrants(person=person, grants=kept + added)
+    return PersonGrants(person=person, name=name or (current.name if current else ""), grants=kept + added)
 
 
 def remove_grants(current: PersonGrants, items: list[dict[str, str]] | None) -> PersonGrants | None:
@@ -153,14 +159,14 @@ def remove_grants(current: PersonGrants, items: list[dict[str, str]] | None) -> 
         return None
     keys = {f"role:{i['role']}" if i.get("role") else f"resource:{i['resource']}" for i in items}
     left = [g for g in current.grants if g.key not in keys]
-    return PersonGrants(person=current.person, grants=left) if left else None
+    return current.model_copy(update={"grants": left}) if left else None
 
 
 def finalise(current: PersonGrants, items: list[dict[str, str]], approvers: list[str], number: int) -> PersonGrants:
     """Write who approved, and which request it was, into the grants this request added."""
     keys = {f"role:{i['role']}" if i.get("role") else f"resource:{i['resource']}" for i in items}
     grants = [g.model_copy(update={"approved_by": sorted(approvers), "request": number}) if g.key in keys else g for g in current.grants]
-    return PersonGrants(person=current.person, grants=grants)
+    return current.model_copy(update={"grants": grants})
 
 
 def parse(pull: PullRequest, bot: str, records: Records, need_list: list[Need] | None = None) -> Request | None:
@@ -208,6 +214,7 @@ def parse(pull: PullRequest, bot: str, records: Records, need_list: list[Need] |
         reason=str(meta.get("reason", "")),
         requested_by=str(meta.get("requested_by", "")),
         expires=meta.get("expires"),
+        person_name=str(meta.get("name", "")),
         created=pull.created,
         state=state,
         approvals=tuple(approvals),
@@ -222,6 +229,3 @@ def parse(pull: PullRequest, bot: str, records: Records, need_list: list[Need] |
 def now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-
-def person_path(person: str) -> str:
-    return person_file(person)

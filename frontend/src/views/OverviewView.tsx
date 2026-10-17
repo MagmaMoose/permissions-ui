@@ -38,7 +38,7 @@ export function OverviewView() {
                     {d.extra.map((upn, i) => (
                       <span key={upn}>
                         {i > 0 && ", "}
-                        <Person upn={upn} />
+                        <Person upn={upn} name={data.names[upn]} />
                       </span>
                     ))}
                   </td>
@@ -57,7 +57,7 @@ export function OverviewView() {
           <ul className="list">
             {missing.map((d) => (
               <li key={d.resource}>
-                <a href={`#/resources/${d.resource}`}>{d.name}</a>: {d.group_found ? d.missing.join(", ") : "its group does not exist"}
+                <a href={`#/resources/${d.resource}`}>{d.name}</a>: {d.group_found ? d.missing.map((u) => data.names[u] || u).join(", ") : "its group does not exist"}
               </li>
             ))}
           </ul>
@@ -88,7 +88,7 @@ export function OverviewView() {
           <ul className="list">
             {data.privileged_people.map((p) => (
               <li key={p.upn}>
-                <Person upn={p.upn} />: {p.privileged.join(", ")}
+                <Person upn={p.upn} name={data.names[p.upn]} />: {p.privileged.join(", ")}
               </li>
             ))}
           </ul>
@@ -100,7 +100,7 @@ export function OverviewView() {
           <ul className="list">
             {data.conflicts.map((c) => (
               <li key={c.upn}>
-                <Person upn={c.upn} />: {c.pairs.map((p) => p.join(" and ")).join("; ")}
+                <Person upn={c.upn} name={data.names[c.upn]} />: {c.pairs.map((p) => p.join(" and ")).join("; ")}
               </li>
             ))}
           </ul>
@@ -116,7 +116,7 @@ export function OverviewView() {
               {data.expiring.map((e) => (
                 <tr key={`${e.upn}-${e.resource}`}>
                   <td>
-                    <Person upn={e.upn} />
+                    <Person upn={e.upn} name={data.names[e.upn]} />
                   </td>
                   <td>
                     <a href={`#/resources/${e.resource}`}>{e.resource}</a>

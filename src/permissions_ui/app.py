@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import date
@@ -155,6 +155,11 @@ def resource_json(catalog: Catalog, rid: str, today: date) -> dict[str, Any]:
     }
 
 
+def names_of(catalog: Catalog, upns: Iterable[str]) -> dict[str, str]:
+    """Display names, from the grants files, of the people a response mentions."""
+    return {upn: p.name for upn in upns if (p := catalog.people.get(upn)) is not None and p.name}
+
+
 def request_json(catalog: Catalog, req: AccessRequest, *, can_approve: bool = False, can_decline: bool = False) -> dict[str, Any]:
     names = {}
     for item in req.items:
@@ -174,6 +179,8 @@ def request_json(catalog: Catalog, req: AccessRequest, *, can_approve: bool = Fa
         "url": req.url,
         "kind": req.kind,
         "person": req.person,
+        # The request record has the name of someone the catalog does not hold yet.
+        "names": {**({req.person: req.person_name} if req.person_name else {}), **names_of(catalog, (req.person, req.requested_by))},
         "items": [{**i, "name": names.get(f"role:{i['role']}" if i.get("role") else f"resource:{i.get('resource')}", "")} for i in req.items],
         "resources": [{"id": rid, "name": catalog.resources[rid].name, "tier": catalog.resources[rid].tier, "kind": catalog.resources[rid].kind} for rid in resources if rid in catalog.resources],
         "reason": req.reason,
@@ -489,6 +496,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
             ],
             "undocumented": [{"id": g.id, "name": g.name, "description": g.description} for g in undocumented],
             "group_prefixes": list(cfg.group_prefixes),
+            "names": {**{upn: name for d in drift for upn, name in d.names.items()}, **names_of(catalog, people)},
         }
 
     @app.get("/api/people")
@@ -506,7 +514,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
         found = []
         if q and sees:
             found = [{"upn": u.upn, "name": u.name, "job": u.job, "department": u.department, "in_catalog": u.upn in catalog.people} for u in await directory.search_users(q)]
-        return {"people": rows, "directory": found}
+        return {"people": rows, "directory": found, "names": {**({who.upn: who.name} if who.name else {}), **names_of(catalog, upns)}}
 
     @app.get("/api/people/{upn}")
     async def person(upn: Annotated[str, Path(pattern=_UPN, max_length=120)], data: Session) -> dict[str, Any]:
@@ -524,6 +532,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
         grants = catalog.people[upn].grants if upn in catalog.people else []
         return {
             "upn": upn,
+            "name": catalog.people[upn].name if upn in catalog.people else "",
             "user": None if user is None else {"name": user.name, "mail": user.mail, "job": user.job, "department": user.department, "enabled": user.enabled},
             "teams": sorted(t.id for t in catalog.teams.values() if upn in t.leads),
             "grants": [
@@ -556,6 +565,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
                                   for upn, h in sorted(catalog.holders(rid, today).items())]
             drift = await insights.resource_drift(catalog, directory, rid, today)
             out["drift"] = None if drift is None else {"group_found": drift.group_found, "missing": list(drift.missing), "extra": list(drift.extra), "members": drift.members}
+            out["names"] = {**(drift.names if drift else {}), **names_of(catalog, (h["upn"] for h in out["holder_list"]))}
         return out
 
     @app.get("/api/directory/users")
