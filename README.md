@@ -225,7 +225,8 @@ and the expiry run.
   approval, decline and done note carry an HMAC-SHA256 under `PERMISSIONS_UI_RECORD_KEY` over the
   pull request's number. A record that is unsigned, changed, copied from another pull request or
   written by another login counts for nothing. So another tool commenting as the same GitHub App
-  approves nothing, and a request edited on GitHub stops being a request.
+  approves nothing, and a request whose record is edited on GitHub stops being a request. The
+  summary above the record is for people; the portal shows and acts on the record.
 - **Records from before the key, and rotation.** Records written before the key existed carry no
   signature: requests opened before the upgrade drop out of the portal (close those still open and
   ask again), while the access they granted stays in the grants files. The key file holds one key
