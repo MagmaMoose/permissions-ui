@@ -92,7 +92,8 @@ class Request:
 
 def branch_name(person: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", person.split("@")[0].lower()).strip("-")[:40] or "person"
-    return f"access/{slug}-{secrets.token_hex(3)}"
+    # <type>/<description>, the branch naming release tooling enforces on every pull request.
+    return f"chore/access-{slug}-{secrets.token_hex(3)}"
 
 
 def describe(catalog: Catalog, items: list[dict[str, str]]) -> str:

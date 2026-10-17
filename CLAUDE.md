@@ -33,7 +33,7 @@ image, a Helm chart (`charts/permissions-ui`) and a reference OpenTofu module
 - **The image name follows the repository name** (`ghcr.io/magmamoose/permissions-ui`). The chart's
   default image is that name; a rename means a chart change in the same PR.
 - **Finalising rebuilds the request branch on the latest `main` with a force update, and merges
-  exactly that commit.** The branches under `access/` belong to the app; a human commit there is
+  exactly that commit.** The `chore/access-*` branches belong to the app; a human commit there is
   overwritten, or holds the merge back if it lands between the rebuild and the merge. For a few
   seconds after a force update GitHub still shows the old head and refuses the merge (405):
   `merge` tries once more after `CATCH_UP_SECONDS`, and a slower GitHub leaves the request
