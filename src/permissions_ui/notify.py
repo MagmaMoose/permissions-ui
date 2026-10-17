@@ -24,7 +24,7 @@ class Notifier:
             return
         card = {
             "type": "AdaptiveCard",
-            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",  # DevSkim: ignore DS137138 - AdaptiveCard schema identifier, not a network request
             "version": "1.4",
             "body": [
                 {"type": "TextBlock", "text": title, "weight": "Bolder", "wrap": True},

@@ -15,15 +15,15 @@ def test_the_test_environment_loads(env):
     [
         ({"AZURE_TENANT_ID": "nope"}, "AZURE_TENANT_ID must be a GUID"),
         ({"PERMISSIONS_UI_SESSION_KEY": "short"}, "at least 32 characters"),
-        ({"PERMISSIONS_UI_PUBLIC_ORIGIN": "http://access.example.test"}, "must be https"),
+        ({"PERMISSIONS_UI_PUBLIC_ORIGIN": "http://access.example.test"}, "must be https"),  # DevSkim: ignore DS137138 - deliberately invalid input; test asserts config rejects it
         ({"PERMISSIONS_UI_PUBLIC_ORIGIN": "https://access.example.test/path"}, "with no path"),
         ({"PERMISSIONS_UI_GITHUB_REPO": "not a repo"}, "owner/name"),
         ({"PERMISSIONS_UI_FULFILMENT": "magic"}, "takes pull-request or graph"),
         ({"PERMISSIONS_UI_MERGE": "sometimes"}, "takes auto or manual"),
         ({"PERMISSIONS_UI_FULFILMENT": "graph", "PERMISSIONS_UI_MERGE": "manual"}, "needs PERMISSIONS_UI_MERGE=auto"),
         ({"PERMISSIONS_UI_CATALOG_PATH": "../escape"}, "without .."),
-        ({"PERMISSIONS_UI_GITHUB_API": "http://api.github.test"}, "must be https"),
-        ({"PERMISSIONS_UI_TEAMS_WEBHOOK": "http://hooks.example.test"}, "must be an https URL"),
+        ({"PERMISSIONS_UI_GITHUB_API": "http://api.github.test"}, "must be https"),  # DevSkim: ignore DS137138 - deliberately invalid input; test asserts config rejects it
+        ({"PERMISSIONS_UI_TEAMS_WEBHOOK": "http://hooks.example.test"}, "must be an https URL"),  # DevSkim: ignore DS137138 - deliberately invalid input; test asserts config rejects it
         ({"PERMISSIONS_UI_SESSION_HOURS": "48"}, "between 1 and 24"),
         ({"PERMISSIONS_UI_BRAND_ACCENT": "teal"}, "#rrggbb"),
         ({"PERMISSIONS_UI_ADMIN_ROLE": "has spaces"}, "app role value"),

@@ -156,7 +156,7 @@ class FakeGraph:
 
 
 def _sha(*parts: Any) -> str:
-    return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
+    return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()  # DevSkim: ignore DS126858 - SHA-1 mimics Git's own content-addressing; this is a test fixture, not a security hash
 
 
 @dataclass
