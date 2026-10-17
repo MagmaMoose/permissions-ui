@@ -382,6 +382,7 @@ def env(tmp_path: Path) -> dict[str, str]:
         "AZURE_FEDERATED_TOKEN_FILE": str(token),
         "PERMISSIONS_UI_PUBLIC_ORIGIN": ORIGIN,
         "PERMISSIONS_UI_SESSION_KEY": "k" * 48,
+        "PERMISSIONS_UI_RECORD_KEY": "r" * 48,
         "PERMISSIONS_UI_GITHUB_REPO": REPO,
         "PERMISSIONS_UI_GITHUB_TOKEN": "gh-token",
         "PERMISSIONS_UI_GITHUB_API": GITHUB_API,

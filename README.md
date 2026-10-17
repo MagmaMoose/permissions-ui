@@ -120,8 +120,8 @@ docker run --rm -v "$PWD/access:/catalog:ro" ghcr.io/magmamoose/permissions-ui:<
 - A grant runs at most the shortest `max_days` among what it gives.
 - Removing access needs no approval and merges at once. Expired grants are removed by the daily
   `expire` job.
-- Only approval records this app writes count. A comment typed on the pull request approves
-  nothing.
+- Only records this app writes and signs count. A comment typed on the pull request approves
+  nothing, and neither does one another tool writes as the same GitHub App.
 
 ## Setting up
 
@@ -155,7 +155,9 @@ satisfy them with its review, or set `config.merge: manual` and merge by hand.
 ### 3. The GitHub App
 
 Repository permissions **Contents**, **Pull requests** and **Issues**: read and write; **Metadata**:
-read. Install it on the catalog repository only, and keep its private key in a Secret.
+read. Install it on the catalog repository only, and keep its private key in a Secret. The app asks
+GitHub for a token for the catalog repository with exactly these permissions, so an App that other
+tools share lends it nothing more; if the installation lacks one, the app says which.
 
 ### 4. Applying grants
 
@@ -187,6 +189,7 @@ is described in [`charts/permissions-ui/values.yaml`](charts/permissions-ui/valu
 | `AZURE_AUTHORITY_HOST` | a sovereign cloud's login host; default `https://login.microsoftonline.com` |
 | `PERMISSIONS_UI_PUBLIC_ORIGIN` | where people open it, `https://host` |
 | `PERMISSIONS_UI_SESSION_KEY[_FILE]` | at least 32 characters, the same on every replica |
+| `PERMISSIONS_UI_RECORD_KEY[_FILE]` | signs the app's records on pull requests: at least 32 characters, one key per line, the first signs (see [Security](#security)) |
 | `PERMISSIONS_UI_SESSION_HOURS` | 1 to 24, default 8 |
 | `PERMISSIONS_UI_GITHUB_REPO`, `_BRANCH`, `PERMISSIONS_UI_CATALOG_PATH` | the catalog repository, its branch (`main`) and folder |
 | `PERMISSIONS_UI_GITHUB_APP_ID` + `PERMISSIONS_UI_GITHUB_APP_PRIVATE_KEY[_FILE]`, or `PERMISSIONS_UI_GITHUB_TOKEN[_FILE]` | how it writes there |
@@ -212,11 +215,25 @@ and the expiry run.
   In the `delegated` directory mode the sealed cookie carries the person's refresh token, never
   an access token; redeeming it takes the app's own credential, and the Graph tokens it is
   redeemed for stay in each replica's memory.
-- **The app's write access is the catalog repository**, through a GitHub App held to that
-  repository. It reads the directory, as itself or as the signed-in person; it writes to it only
-  in the `graph` mode.
+- **The app's write access is the catalog repository.** Its GitHub App token is asked for that
+  repository alone, with contents, pull requests and issues write and metadata read, even when the
+  App is installed more widely or shared with other tools. It reads the directory, as itself or as
+  the signed-in person; it writes to it only in the `graph` mode.
 - **Approvals are checked by the server** against the catalog and the directory before the app
-  records them, and only the app's own records count.
+  records them.
+- **Only the app's own signed records count.** The request in the pull request body and every
+  approval, decline and done note carry an HMAC-SHA256 under `PERMISSIONS_UI_RECORD_KEY`, bound to
+  that pull request (the request to its branch, the rest to its number). A record that is unsigned,
+  changed, copied from another pull request or written by another login counts for nothing. So
+  another tool commenting as the same GitHub App approves nothing, and a request edited on GitHub
+  stops being a request.
+- **Records from before the key, and rotation.** Records written before the key existed carry no
+  signature: requests opened before the upgrade drop out of the portal (close those still open and
+  ask again), while the access they granted stays in the grants files. The key file holds one key
+  per line; the first signs and every one verifies. To rotate, put the new key on the first line
+  and keep the old one below it while its requests should still show. Remove a key that may have
+  leaked: what it signed stops counting. The chart creates the key once and keeps it through
+  upgrades and uninstalls.
 - **Every change is reviewable**: a request, its approvals and its merge are a pull request, so
   the repository's history is the audit trail, and its branch rules still apply.
 

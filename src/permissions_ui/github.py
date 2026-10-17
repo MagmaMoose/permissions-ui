@@ -6,8 +6,9 @@ pipeline that applies the catalog (or the `graph` fulfilment mode) makes it real
 repository is the whole state: this server stores nothing, and the pull request history is
 the audit trail.
 
-The app authenticates as a GitHub App installed on that one repository (preferred: it can be
-held to contents, pull requests and issues on it alone) or with a token.
+The app authenticates as a GitHub App installed on that one repository (preferred) or with a
+token. The App's installation token is asked for that repository alone, with exactly
+`PERMISSIONS`, so an App installed more widely, or shared with other tools, lends this app no more.
 """
 
 from __future__ import annotations
@@ -21,11 +22,21 @@ from typing import Any
 import httpx
 import jwt
 
+PERMISSIONS = {"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"}
+_LEVELS = {"read": 1, "write": 2, "admin": 3}
+
 
 class GitHubError(Exception):
     def __init__(self, message: str, *, status: int = 502):
         super().__init__(message)
         self.status = status
+
+
+def _reason(response: httpx.Response) -> str:
+    try:
+        return str(response.json().get("message") or "")[:200]
+    except ValueError:
+        return ""
 
 
 @dataclass(frozen=True)
@@ -118,14 +129,24 @@ class GitHub:
                 found = await self._http.get(f"{self._api}/repos/{self.repo}/installation", headers=headers, timeout=15)
                 if found.status_code != 200:
                     raise GitHubError(f"the GitHub App is not installed on {self.repo} (HTTP {found.status_code})")
+                installation = found.json()
+                held = installation.get("permissions") or {}
+                missing = [f"{name}: {level}" for name, level in PERMISSIONS.items() if _LEVELS.get(held.get(name, ""), 0) < _LEVELS[level]]
+                if missing:
+                    raise GitHubError(f"the GitHub App's installation on {self.repo} lacks {', '.join(missing)}: grant it on the App and accept it on the installation")
                 if not self._bot:
                     app = await self._http.get(f"{self._api}/app", headers=headers, timeout=15)
                     self._bot = f"{app.json().get('slug')}[bot]" if app.status_code == 200 else ""
-                minted = await self._http.post(f"{self._api}/app/installations/{found.json()['id']}/access_tokens", headers=headers, timeout=15)
+                minted = await self._http.post(
+                    f"{self._api}/app/installations/{installation['id']}/access_tokens",
+                    headers=headers,
+                    json={"repositories": [self.repo.split("/", 1)[1]], "permissions": PERMISSIONS},
+                    timeout=15,
+                )
             except httpx.HTTPError as err:
                 raise GitHubError(f"GitHub did not answer: {err.__class__.__name__}") from err
             if minted.status_code != 201:
-                raise GitHubError(f"GitHub refused an installation token (HTTP {minted.status_code})")
+                raise GitHubError(f"GitHub refused an installation token for {self.repo} (HTTP {minted.status_code}): {_reason(minted)}")
             body = minted.json()
             self._installation = (str(body["token"]), time.time() + 3600)
             return f"Bearer {body['token']}"
@@ -145,12 +166,7 @@ class GitHub:
         except httpx.HTTPError as err:
             raise GitHubError(f"GitHub did not answer: {err.__class__.__name__}") from err
         if response.status_code not in ok:
-            message = ""
-            try:
-                message = str(response.json().get("message") or "")
-            except ValueError:
-                pass
-            raise GitHubError(f"GitHub answered HTTP {response.status_code} for {method} {path.split('?')[0]}: {message[:200]}", status=response.status_code)
+            raise GitHubError(f"GitHub answered HTTP {response.status_code} for {method} {path.split('?')[0]}: {_reason(response)}", status=response.status_code)
         return response.json() if response.content else {}
 
     # ── Reading the catalog ───────────────────────────────────────────────────────────
