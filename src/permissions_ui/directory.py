@@ -1,19 +1,23 @@
-"""Microsoft Graph, as the app itself: who exists, which groups exist, who is in them.
+"""Microsoft Graph: who exists, which groups exist, who is in them.
 
-Reads need User.Read.All and GroupMember.Read.All (application). Writes happen only in the
-`graph` fulfilment mode and need GroupMember.ReadWrite.All; the default `pull-request` mode
-leaves writing to the pipeline that applies the catalog. Membership is read transitively, so
-someone in a nested group counts as a member, the same way a groups claim counts them.
+Reads need User.Read.All and GroupMember.Read.All: application permissions in the default
+`app` directory mode, where the app reads as itself, or delegated ones in the `delegated` mode,
+where it reads as the signed-in person. Writes happen only in the `graph` fulfilment mode,
+always as the app, and need GroupMember.ReadWrite.All; the default `pull-request` mode leaves
+writing to the pipeline that applies the catalog. Membership is read transitively, so someone
+in a nested group counts as a member, the same way a groups claim counts them.
 
 Answers are cached in this replica's memory for a short while: every page of the UI asks
-about the same few hundred groups.
+about the same few hundred groups. The cache is kept per reader, because a delegated read
+returns only what that person may see (a guest sees less, and a tenant can stop members reading
+other users): one person's answers are never served to another.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -69,19 +73,18 @@ def _odata(value: str) -> str:
     return value.replace("'", "''")
 
 
-class Directory:
-    def __init__(self, http: httpx.AsyncClient, *, token_url: str, client_id: str, credential: Callable[[], dict[str, str]], ttl: float = 120.0):
+class AppToken:
+    """The app's own Graph token, by client credentials, kept until shortly before it expires."""
+
+    def __init__(self, http: httpx.AsyncClient, *, token_url: str, client_id: str, credential: Callable[[], dict[str, str]]):
         self._http = http
         self._token_url = token_url
         self._client_id = client_id
         self._credential = credential
         self._token: tuple[str, float] = ("", 0.0)
         self._lock = asyncio.Lock()
-        self._cache: dict[str, tuple[float, Any]] = {}
-        self._ttl = ttl
-        self._calls = asyncio.Semaphore(8)
 
-    async def _app_token(self) -> str:
+    async def __call__(self) -> str:
         async with self._lock:
             token, expires = self._token
             if token and expires - 120 > time.time():
@@ -98,8 +101,21 @@ class Directory:
             self._token = (str(body["access_token"]), time.time() + int(body.get("expires_in") or 3600))
             return self._token[0]
 
+
+class Directory:
+    def __init__(self, http: httpx.AsyncClient, *, token: Callable[[], Awaitable[str]], reader: Callable[[], str] = lambda: "", ttl: float = 120.0):
+        """`token` gives the bearer token for the call at hand: the app's own, or the signed-in
+        person's. `reader` says whose reads they are ("" for the app) and keys the cache."""
+        self._http = http
+        self._token = token
+        self._reader = reader
+        self._cache: dict[tuple[str, str], tuple[float, Any]] = {}
+        self._swept = float("-inf")
+        self._ttl = ttl
+        self._calls = asyncio.Semaphore(8)
+
     async def _request(self, method: str, url: str, *, json: Any = None, search: bool = False) -> httpx.Response:
-        headers = {"Authorization": f"Bearer {await self._app_token()}", "Accept": "application/json"}
+        headers = {"Authorization": f"Bearer {await self._token()}", "Accept": "application/json"}
         if search:
             # $search and $count on directory objects need eventual consistency.
             headers["ConsistencyLevel"] = "eventual"
@@ -109,7 +125,7 @@ class Directory:
             except httpx.HTTPError as err:
                 raise DirectoryError(f"Microsoft Graph did not answer: {err.__class__.__name__}") from err
         if response.status_code == 403:
-            raise DirectoryError("the app lacks a Microsoft Graph permission for this; see the README", status=403)
+            raise DirectoryError("Microsoft Graph refused this for want of a permission; see the README", status=403)
         return response
 
     async def _pages(self, url: str, *, search: bool = False, limit: int = 5000) -> list[dict[str, Any]]:
@@ -127,16 +143,22 @@ class Directory:
         return items
 
     async def _cached(self, key: str, load):
-        hit = self._cache.get(key)
-        if hit and hit[0] > time.monotonic():
+        slot = (self._reader(), key)
+        now = time.monotonic()
+        hit = self._cache.get(slot)
+        if hit and hit[0] > now:
             return hit[1]
         value = await load()
-        self._cache[key] = (time.monotonic() + self._ttl, value)
+        if now - self._swept > self._ttl:
+            # Kept per reader, expired answers would pile up for everyone who ever signed in.
+            self._cache = {k: v for k, v in self._cache.items() if v[0] > now}
+            self._swept = now
+        self._cache[slot] = (time.monotonic() + self._ttl, value)
         return value
 
     def forget(self, *prefixes: str) -> None:
-        for key in [k for k in self._cache if k.startswith(prefixes)]:
-            del self._cache[key]
+        for slot in [s for s in self._cache if s[1].startswith(prefixes)]:
+            del self._cache[slot]
 
     async def user(self, key: str) -> User | None:
         """A user by object id or user principal name."""

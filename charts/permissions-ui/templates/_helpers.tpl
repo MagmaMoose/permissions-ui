@@ -67,6 +67,12 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- if not (has .Values.config.fulfilment (list "pull-request" "graph")) }}
 {{- fail "config.fulfilment takes pull-request or graph" }}
 {{- end }}
+{{- if not (has .Values.config.directory (list "app" "delegated")) }}
+{{- fail "config.directory takes app or delegated" }}
+{{- end }}
+{{- if and (eq .Values.config.directory "delegated") (eq .Values.config.fulfilment "graph") }}
+{{- fail "config.fulfilment graph changes groups as the app, so it needs config.directory app" }}
+{{- end }}
 {{- end }}
 
 {{- define "permissions-ui.env" -}}
@@ -99,6 +105,8 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
   value: /etc/permissions-ui/session/{{ .Values.session.key }}
 - name: PERMISSIONS_UI_FULFILMENT
   value: {{ .Values.config.fulfilment | quote }}
+- name: PERMISSIONS_UI_DIRECTORY
+  value: {{ .Values.config.directory | quote }}
 - name: PERMISSIONS_UI_MERGE
   value: {{ .Values.config.merge | quote }}
 {{- with .Values.config.groupPrefixes }}

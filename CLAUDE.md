@@ -9,6 +9,12 @@ image, a Helm chart (`charts/permissions-ui`) and a reference OpenTofu module
 - **Approval records count only from the app's own GitHub login** (`PERMISSIONS_UI_GITHUB_BOT`, or
   the App's `<slug>[bot]`). Switching the token to another user leaves every open request
   "pending" with its approvals ignored, and nothing errors.
+- **`session` in `app.py` stays an `async def`.** It hands the request's session to the
+  delegated directory mode through a ContextVar. As a plain `def` it runs in a worker thread, the
+  value never reaches the route, and every delegated directory read answers 401 signed_out.
+- **People are their `userPrincipalName` in this directory**, looked up by object id at sign-in,
+  never the ID token's `preferred_username`. For a guest that is their home tenant's name for
+  them, and every grant, lead and approver check would miss them.
 - **No `from __future__ import annotations` in `app.py`.** The routes use `Annotated` aliases
   defined inside `create_app`; postponed annotations turn them into unresolvable strings and
   FastAPI reads `data` as a required query parameter: every route answers 422.

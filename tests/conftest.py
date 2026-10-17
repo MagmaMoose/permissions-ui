@@ -37,6 +37,7 @@ BOT = "permissions-bot"
 TODAY = date(2026, 10, 17)
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "catalog"
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+GRAPH_SCOPES = {"https://graph.microsoft.com/User.Read.All", "https://graph.microsoft.com/GroupMember.Read.All"}
 
 PEOPLE = {
     "ada.lovelace@example.com": "Ada Lovelace",
@@ -60,6 +61,17 @@ class FakeEntra:
     roles: list[str] = field(default_factory=list)
     challenge: str = ""
     nonce: str = ""
+    token_requests: list[dict[str, list[str]]] = field(default_factory=list)
+    # (status, error) for every refresh: (400, "invalid_grant") is a revoked or expired one.
+    refresh_error: tuple[int, str] | None = None
+    issued: int = 0
+    # Guests, by their userPrincipalName here: their ID token names them by their home address.
+    guests: dict[str, str] = field(default_factory=dict)
+
+    def person_token(self, upn: str, scope: str) -> str:
+        """A delegated token. Graph takes it only when it was asked for with Graph's scopes."""
+        self.issued += 1
+        return f"{'graph' if GRAPH_SCOPES <= set(scope.split()) else 'other'}:{upn}:{self.issued}"
 
     def jwks(self) -> dict[str, Any]:
         jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(KEY.public_key()))
@@ -77,13 +89,14 @@ class FakeEntra:
             "tid": TENANT,
             "oid": oid(self.user),
             "name": PEOPLE.get(self.user, self.user),
-            "preferred_username": self.user,
+            "preferred_username": self.guests.get(self.user, self.user),
             "roles": self.roles,
         }
         return jwt.encode(claims, KEY, algorithm="RS256", headers={"kid": "test-key"})
 
     def token(self, request: httpx.Request) -> httpx.Response:
         form = parse_qs(request.content.decode())
+        self.token_requests.append(form)
         grant = form["grant_type"][0]
         if grant == "client_credentials":
             return httpx.Response(200, json={"access_token": "graph-app-token", "expires_in": 3600})
@@ -92,7 +105,16 @@ class FakeEntra:
             digest = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
             if form["code"][0] != "good-code" or digest != self.challenge:
                 return httpx.Response(400, json={"error": "invalid_grant", "error_description": "AADSTS70008: bad code"})
-            return httpx.Response(200, json={"token_type": "Bearer", "expires_in": 3600, "id_token": self.id_token()})
+            body = {"token_type": "Bearer", "expires_in": 3600, "id_token": self.id_token()}
+            if "offline_access" in form["scope"][0].split():
+                body |= {"access_token": self.person_token(self.user, form["scope"][0]), "refresh_token": f"rt:{self.user}"}
+            return httpx.Response(200, json=body)
+        if grant == "refresh_token":
+            if self.refresh_error:
+                status, error = self.refresh_error
+                return httpx.Response(status, json={"error": error, "error_description": f"AADSTS700082: {error}"})
+            upn = form["refresh_token"][0].removeprefix("rt:")
+            return httpx.Response(200, json={"token_type": "Bearer", "expires_in": 3600, "access_token": self.person_token(upn, form["scope"][0])})
         return httpx.Response(400, json={"error": "unsupported_grant_type"})
 
 
@@ -102,6 +124,8 @@ class FakeGraph:
     groups: dict[str, dict[str, Any]] = field(default_factory=dict)
     members: dict[str, set[str]] = field(default_factory=dict)
     writes: list[tuple[str, str, str]] = field(default_factory=list)
+    # (who, path) for every call: "app", or the person whose delegated token it carried.
+    calls: list[tuple[str, str]] = field(default_factory=list)
 
     def add_user(self, upn: str, name: str, enabled: bool = True) -> None:
         self.users[oid(upn)] = {"id": oid(upn), "displayName": name, "userPrincipalName": upn, "mail": upn, "accountEnabled": enabled}
@@ -113,9 +137,12 @@ class FakeGraph:
         return gid
 
     def handle(self, request: httpx.Request) -> httpx.Response:
-        if request.headers.get("authorization") != "Bearer graph-app-token":
+        auth = request.headers.get("authorization", "")
+        person = re.fullmatch(r"Bearer graph:([^:]+):\d+", auth)
+        if auth != "Bearer graph-app-token" and not person:
             return httpx.Response(401)
         path = unquote(request.url.path).removeprefix("/v1.0")
+        self.calls.append((person.group(1) if person else "app", path))
         query = {k: v[0] for k, v in parse_qs(urlsplit(str(request.url)).query).items()}
         if request.method == "GET" and (m := re.fullmatch(r"/users/([^/]+)", path)):
             key = m.group(1).lower()
