@@ -122,7 +122,7 @@ class Portal:
             return None
 
     async def _parse(self, catalog: Catalog, pull: PullRequest) -> rq.Request | None:
-        metas = self._records.read(pull.body, "request", pull.head)
+        metas = self._records.read(pull.body, "request", pull.number)
         if not metas:
             return None
         meta = metas[-1]
@@ -204,8 +204,9 @@ class Portal:
         branch = rq.branch_name(person)
         await github.commit(branch, {person_file(person): dump_person(changed)}, title)
         privileged = any(catalog.resources[rid].tier == "privileged" for rid in wanted)
-        body = rq.body(catalog, meta, need_list, self._origin, self._records.write("request", meta, branch))
-        pull = await github.open_pull(branch, title, body, [rq.LABEL, "access:pending", *(["tier:privileged"] if privileged else [])])
+        text = rq.body(catalog, meta, need_list, self._origin)
+        pull = await github.open_pull(branch, title, text, [rq.LABEL, "access:pending", *(["tier:privileged"] if privileged else [])])
+        await github.set_body(pull.number, f"{text}\n\n{self._records.write('request', meta, pull.number)}")
         _log("request opened", number=pull.number, person=person, by=actor.upn, items=items)
         # A lead asking for someone on their behalf is approving it: an onboarding needs no
         # second click from the same lead. Privileged access still waits for a second person.
@@ -248,8 +249,9 @@ class Portal:
         branch = rq.branch_name(person)
         left = rq.remove_grants(current, items)
         await github.commit(branch, {person_file(person): dump_person(left) if left else None}, title)
-        body = rq.body(catalog, meta, [], self._origin, self._records.write("request", meta, branch))
-        pull = await github.open_pull(branch, title, body, [rq.LABEL, "access:approved", "access:removal"])
+        text = rq.body(catalog, meta, [], self._origin)
+        pull = await github.open_pull(branch, title, text, [rq.LABEL, "access:approved", "access:removal"])
+        await github.set_body(pull.number, f"{text}\n\n{self._records.write('request', meta, pull.number)}")
         _log("removal opened", number=pull.number, person=person, by=actor.upn, everything=items is None)
         req = await self.request(pull.number)
         await self._finalise(req, actor)
@@ -371,7 +373,7 @@ class Portal:
             changed: PersonGrants | None = rq.apply_grants(current, req.person, items, reason=req.reason, requested_by=req.requested_by, expires=expires, today=today)
             changed = rq.finalise(changed, items, [a.upn for a in req.approvals], req.number)  # type: ignore[arg-type]
         else:
-            everything = bool(self._records.read(pull.body, "request", pull.head)[-1].get("everything"))
+            everything = bool(self._records.read(pull.body, "request", req.number)[-1].get("everything"))
             changed = rq.remove_grants(current, None if everything else items) if current else None
         content = dump_person(changed) if changed else None
         await github.commit(pull.head, {person_file(req.person): content}, f"{pull.title} (#{req.number})", replace=True)

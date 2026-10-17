@@ -3,10 +3,10 @@
 The pull request body starts with a summary for people and ends with the request as JSON in an
 HTML comment, which GitHub does not show. Approvals, declines and "done" notes for manual
 resources are comments that carry the same kind of hidden record. Every record carries an HMAC
-under the server's record key, bound to its pull request (the request to its branch, the rest to
-its number), and only comments written by this app's login count. So neither a lookalike comment
-nor another tool commenting as the same GitHub App approves anything, a record copied from another
-pull request counts for nothing, and a request edited on GitHub is no longer a request.
+under the server's record key over its pull request's number, and only comments written by this
+app's login count. So neither a lookalike comment nor another tool commenting as the same GitHub
+App approves anything, a record copied to another pull request counts for nothing, and a request
+edited on GitHub is no longer a request.
 """
 
 from __future__ import annotations
@@ -33,25 +33,24 @@ State = Literal["pending", "approved", "granted", "declined", "withdrawn", "open
 
 class Records:
     """Writes records signed with the first key and reads those that any key signed for this pull
-    request, so a key rotated out keeps what it signed while it stays listed."""
+    request number, so a key rotated out keeps what it signed while it stays listed."""
 
     def __init__(self, keys: tuple[bytes, ...]):
         self._keys = keys
 
     @staticmethod
-    def _mac(key: bytes, kind: str, bound: str, raw: str) -> str:
-        return hmac.new(key, f"{kind}\n{bound}\n{raw}".encode(), hashlib.sha256).hexdigest()
+    def _mac(key: bytes, kind: str, number: int, raw: str) -> str:
+        return hmac.new(key, f"{kind}\n{number}\n{raw}".encode(), hashlib.sha256).hexdigest()
 
-    def write(self, kind: str, data: dict[str, Any], bound: str | int) -> str:
-        """`bound` is the pull request's branch for the request record, its number for the rest."""
+    def write(self, kind: str, data: dict[str, Any], number: int) -> str:
         # `--` would end the HTML comment early, so it never appears in the JSON.
         raw = json.dumps(data, separators=(",", ":"), sort_keys=True).replace("--", "-\\u002d")
-        return f"<!-- permissions-ui:{kind} {raw} {self._mac(self._keys[0], kind, str(bound), raw)} -->"
+        return f"<!-- permissions-ui:{kind} {raw} {self._mac(self._keys[0], kind, number, raw)} -->"
 
-    def read(self, text: str, kind: str, bound: str | int) -> list[dict[str, Any]]:
+    def read(self, text: str, kind: str, number: int) -> list[dict[str, Any]]:
         out = []
         for found_kind, raw, mac in _RECORD.findall(text):
-            if found_kind != kind or not any(hmac.compare_digest(mac, self._mac(key, kind, str(bound), raw)) for key in self._keys):
+            if found_kind != kind or not any(hmac.compare_digest(mac, self._mac(key, kind, number, raw)) for key in self._keys):
                 continue
             try:
                 data = json.loads(raw)
@@ -110,8 +109,8 @@ def title(catalog: Catalog, kind: str, person: str, items: list[dict[str, str]])
     return f"{verb} {describe(catalog, items)} {'to' if kind == 'grant' else 'from'} {person}"[:250]
 
 
-def body(catalog: Catalog, meta: dict[str, Any], need_list: list[Need], origin: str, signed: str) -> str:
-    """The pull request body, ending in `signed`: the request record for its branch."""
+def body(catalog: Catalog, meta: dict[str, Any], need_list: list[Need], origin: str) -> str:
+    """The pull request body for people. The request record follows once the number is known."""
     lines = [
         f"**{'Access request' if meta['kind'] == 'grant' else 'Removal'}** for `{meta['person']}`, by `{meta['requested_by']}`.",
         "",
@@ -131,7 +130,7 @@ def body(catalog: Catalog, meta: dict[str, Any], need_list: list[Need], origin: 
             lines.append(f"| {resource.name} (`{rid}`) | {resource.tier} | {via} | {approvers} |")
     if meta.get("expires"):
         lines += ["", f"Expires {meta['expires']}."]
-    lines += ["", f"Approve or decline in [permissions-ui]({origin}/#/requests). Approvals left here by hand do not count.", "", signed]
+    lines += ["", f"Approve or decline in [permissions-ui]({origin}/#/requests). Approvals left here by hand do not count."]
     return "\n".join(lines)
 
 
@@ -164,7 +163,7 @@ def finalise(current: PersonGrants, items: list[dict[str, str]], approvers: list
 
 def parse(pull: PullRequest, bot: str, records: Records, need_list: list[Need] | None = None) -> Request | None:
     """A request from its pull request, or None when its body holds no request record this app signed for it."""
-    metas = records.read(pull.body, "request", pull.head)
+    metas = records.read(pull.body, "request", pull.number)
     if not metas:
         return None
     meta = metas[-1]

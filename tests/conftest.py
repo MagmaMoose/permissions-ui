@@ -286,7 +286,7 @@ class FakeGitHub:
         if method == "GET" and (m := re.fullmatch(r"/pulls/(\d+)", path)):
             return httpx.Response(200, json=self._pull_json(int(m.group(1))))
         if method == "PATCH" and (m := re.fullmatch(r"/pulls/(\d+)", path)):
-            self.pulls[int(m.group(1))]["state"] = body["state"]
+            self.pulls[int(m.group(1))].update({k: body[k] for k in ("state", "body") if k in body})
             return httpx.Response(200, json=self._pull_json(int(m.group(1))))
         if method == "GET" and path == "/issues":
             label, state = query.get("labels", ""), query.get("state", "open")

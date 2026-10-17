@@ -231,6 +231,9 @@ class GitHub:
         comments = tuple(Comment(int(c["id"]), str((c.get("user") or {}).get("login") or ""), str(c.get("body") or ""), str(c.get("created_at") or "")) for c in data)
         return PullRequest(**{**pull.__dict__, "comments": comments})
 
+    async def set_body(self, number: int, body: str) -> None:
+        await self._call("PATCH", f"/repos/{self.repo}/pulls/{number}", json={"body": body})
+
     async def comment(self, number: int, body: str) -> None:
         await self._call("POST", f"/repos/{self.repo}/issues/{number}/comments", json={"body": body})
 

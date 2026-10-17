@@ -222,11 +222,10 @@ and the expiry run.
 - **Approvals are checked by the server** against the catalog and the directory before the app
   records them.
 - **Only the app's own signed records count.** The request in the pull request body and every
-  approval, decline and done note carry an HMAC-SHA256 under `PERMISSIONS_UI_RECORD_KEY`, bound to
-  that pull request (the request to its branch, the rest to its number). A record that is unsigned,
-  changed, copied from another pull request or written by another login counts for nothing. So
-  another tool commenting as the same GitHub App approves nothing, and a request edited on GitHub
-  stops being a request.
+  approval, decline and done note carry an HMAC-SHA256 under `PERMISSIONS_UI_RECORD_KEY` over the
+  pull request's number. A record that is unsigned, changed, copied from another pull request or
+  written by another login counts for nothing. So another tool commenting as the same GitHub App
+  approves nothing, and a request edited on GitHub stops being a request.
 - **Records from before the key, and rotation.** Records written before the key existed carry no
   signature: requests opened before the upgrade drop out of the portal (close those still open and
   ask again), while the access they granted stays in the grants files. The key file holds one key

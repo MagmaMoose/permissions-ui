@@ -6,9 +6,9 @@ image, a Helm chart (`charts/permissions-ui`) and a reference OpenTofu module
 
 ## Things that fail silently
 
-- **Records count only signed with `PERMISSIONS_UI_RECORD_KEY` for their pull request** (the
-  request record for its branch, the others for its number), **and comments only from the app's
-  own GitHub login** (`PERMISSIONS_UI_GITHUB_BOT`, or the App's `<slug>[bot]`). A new key drops
+- **Records count only signed with `PERMISSIONS_UI_RECORD_KEY` for their pull request's number,
+  and comments only from the app's own GitHub login** (`PERMISSIONS_UI_GITHUB_BOT`, or the App's
+  `<slug>[bot]`). The request record is written after the pull request exists. A new key drops
   every request the old one signed from the portal; another login leaves every open request
   "pending" with its approvals ignored. Nothing errors either way. Rotate with the new key on the
   key file's first line and the old one below it.

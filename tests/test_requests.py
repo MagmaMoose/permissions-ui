@@ -4,13 +4,12 @@ from permissions_ui.requests import Records, parse
 
 META = {"version": 1, "kind": "grant", "person": "ada.lovelace@example.com", "items": [{"resource": "grafana-viewer"}], "reason": "dashboards -- please", "requested_by": "ada.lovelace@example.com", "expires": None}
 RECORDS = Records((b"r" * 48,))
-BRANCH = "access/ada-1"
 NEED = [Need("grafana-viewer", ("team:platform",), 1)]
 
 
-def pull(*comments: Comment, state: str = "open", merged: bool = False, body: str = "", head: str = BRANCH) -> PullRequest:
-    body = body or "text\n" + RECORDS.write("request", META, BRANCH)
-    return PullRequest(1, "t", body, state, merged, ("access-request",), head, "abc", "u", "bot", "c", "u", comments=comments)
+def pull(*comments: Comment, state: str = "open", merged: bool = False, body: str = "") -> PullRequest:
+    body = body or "text\n" + RECORDS.write("request", META, 1)
+    return PullRequest(1, "t", body, state, merged, ("access-request",), "access/ada-1", "abc", "u", "bot", "c", "u", comments=comments)
 
 
 def approval(author: str, upn: str, *, records: Records = RECORDS, number: int = 1) -> Comment:
@@ -18,9 +17,9 @@ def approval(author: str, upn: str, *, records: Records = RECORDS, number: int =
 
 
 def test_a_record_survives_text_that_would_end_an_html_comment():
-    text = RECORDS.write("request", META, BRANCH)
+    text = RECORDS.write("request", META, 1)
     assert "--" not in text[4:-3]
-    assert RECORDS.read(text, "request", BRANCH) == [META]
+    assert RECORDS.read(text, "request", 1) == [META]
 
 
 def test_only_the_apps_own_comments_count_as_approvals():
@@ -38,10 +37,10 @@ def test_an_approval_counts_only_signed_by_this_app_for_this_pull_request():
         assert parse(pull(comment), "permissions-bot", RECORDS, NEED).state == "pending"
 
 
-def test_a_request_changed_or_moved_to_another_branch_is_not_a_request():
-    signed = RECORDS.write("request", META, BRANCH)
+def test_a_request_changed_or_copied_from_another_pull_request_is_not_a_request():
+    signed = RECORDS.write("request", META, 1)
     assert parse(pull(body=signed.replace("ada.lovelace", "mallory")), "permissions-bot", RECORDS, NEED) is None
-    assert parse(pull(head="access/mallory-1"), "permissions-bot", RECORDS, NEED) is None
+    assert parse(pull(body=RECORDS.write("request", META, 2)), "permissions-bot", RECORDS, NEED) is None
 
 
 def test_a_rotated_key_still_reads_what_the_old_one_signed():

@@ -152,13 +152,17 @@ def test_an_approval_another_tool_writes_as_the_app_counts_for_nothing(client, w
     assert client.get(f"/api/requests/{second['number']}").json()["state"] == "pending"
 
 
-def test_a_request_edited_on_github_is_no_longer_a_request(client, world):
+def test_a_request_edited_or_copied_on_github_is_not_a_request(client, world):
     me = sign_in(client, world, "alan.turing@example.com")
     req = ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").json()
+    # Another pull request from the same branch name (a fork's, say) with the body copied over.
+    copy = req["number"] + 1
+    world.github.pulls[copy], world.github.comments[copy] = dict(world.github.pulls[req["number"]]), []
     pull = world.github.pulls[req["number"]]
     pull["body"] = pull["body"].replace("grafana-viewer", "k8s-prd-cluster-admin")
     lead = sign_in(client, world, "grace.hopper@example.com")
-    assert client.post(f"/api/requests/{req['number']}/approve", headers=write_headers(lead)).json()["error"] == "not_a_request"
+    for number in (req["number"], copy):
+        assert client.post(f"/api/requests/{number}/approve", headers=write_headers(lead)).json()["error"] == "not_a_request"
 
 
 def test_someone_who_is_not_an_approver_cannot_approve(client, world):
