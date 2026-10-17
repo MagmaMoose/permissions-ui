@@ -35,3 +35,25 @@ run "roles_expand_and_only_groups_count" {
     error_message = "Manual and GitHub resources are not Entra ID memberships."
   }
 }
+
+run "existing_memberships_are_offered_for_import" {
+  command = plan
+
+  override_data {
+    target = data.azuread_group.this
+    values = {
+      object_id = "00000000-0000-0000-0000-0000000000a1"
+      members   = ["00000000-0000-0000-0000-0000000000b1"]
+    }
+  }
+
+  assert {
+    condition     = toset(keys(output.import_ids)) == toset(output.memberships)
+    error_message = "Every membership that already exists must be offered to the root module's import block."
+  }
+
+  assert {
+    condition     = alltrue([for id in values(output.import_ids) : id == "00000000-0000-0000-0000-0000000000a1/member/00000000-0000-0000-0000-0000000000b1"])
+    error_message = "An import id is <group>/member/<member>."
+  }
+}

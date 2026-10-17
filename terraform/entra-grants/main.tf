@@ -3,12 +3,13 @@
 # at the next plan.
 #
 # Not authoritative: a member added by hand stays in the group. permissions-ui lists those as
-# "access nobody granted" so someone decides. A membership that already exists is imported
-# rather than created, so pointing this at groups that already have members needs no
+# "access nobody granted" so someone decides. A membership that already exists is adopted
+# rather than created, through the import block the README puts in the root module (an import
+# block may only sit there), so pointing this at groups that already have members needs no
 # preparation.
 
 terraform {
-  # for_each on import blocks.
+  # for_each on the caller's import block.
   required_version = ">= 1.7"
   required_providers {
     azuread = {
@@ -67,13 +68,6 @@ locals {
       member = data.azuread_user.this[m.person].object_id
     }
   }
-}
-
-import {
-  for_each = { for key, id in local.ids : key => id if contains(data.azuread_group.this[local.resources[local.pairs[key].resource].target].members, id.member) }
-
-  to = azuread_group_member.this[each.key]
-  id = "${each.value.group}/member/${each.value.member}"
 }
 
 resource "azuread_group_member" "this" {
