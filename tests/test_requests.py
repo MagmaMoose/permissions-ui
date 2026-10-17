@@ -1,6 +1,8 @@
+import re
+
 from permissions_ui.github import Comment, PullRequest
 from permissions_ui.policy import Need
-from permissions_ui.requests import Records, parse
+from permissions_ui.requests import Records, branch_name, parse
 
 META = {"version": 1, "kind": "grant", "person": "ada.lovelace@example.com", "items": [{"resource": "grafana-viewer"}], "reason": "dashboards -- please", "requested_by": "ada.lovelace@example.com", "expires": None}
 RECORDS = Records((b"r" * 48,))
@@ -68,3 +70,8 @@ def test_states_follow_the_pull_request():
 def test_a_pull_request_without_a_record_is_not_a_request():
     other = PullRequest(2, "t", "just a change", "open", False, (), "b", "s", "u", "a", "c", "u")
     assert parse(other, "permissions-bot", RECORDS, []) is None
+
+
+def test_request_branches_follow_conventional_naming():
+    assert re.fullmatch(r"chore/access-ada-lovelace-[0-9a-f]{6}", branch_name("Ada.Lovelace@example.com"))
+    assert re.fullmatch(r"chore/access-person-[0-9a-f]{6}", branch_name("@example.com"))
