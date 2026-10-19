@@ -1,7 +1,7 @@
 """A request as a pull request: what it asks for, who approved it, and where it stands.
 
 The pull request body starts with a summary for people and ends with the request as JSON in an
-HTML comment, which GitHub does not show. Approvals, declines and "done" notes for manual
+HTML comment, which GitHub does not show. An issue tracks each request; the pull request closes it. Approvals, declines and "done" notes for manual
 resources are comments that carry the same kind of hidden record. Every record carries an HMAC
 under the server's record key over its pull request's number, and only comments written by this
 app's login count. So neither a lookalike comment nor another tool commenting as the same GitHub
@@ -86,9 +86,16 @@ class Request:
     outstanding: tuple[Need, ...] = ()
     declined_by: str = ""
     decline_reason: str = ""
+    declined_at: str = ""
     done: tuple[str, ...] = ()
     labels: tuple[str, ...] = field(default_factory=tuple)
     person_name: str = ""
+    issue: int | None = None
+    merged_at: str | None = None
+
+    @property
+    def issue_url(self) -> str:
+        return f"{self.url.rsplit('/pull/', 1)[0]}/issues/{self.issue}" if self.issue else ""
 
 
 def branch_name(person: str) -> str:
@@ -221,8 +228,11 @@ def parse(pull: PullRequest, bot: str, records: Records, need_list: list[Need] |
         outstanding=tuple(left),
         declined_by=str(last_decline.get("upn", "")),
         decline_reason=str(last_decline.get("reason", "")),
+        declined_at=str(last_decline.get("at", "")),
         done=done,
         labels=pull.labels,
+        issue=meta["issue"] if isinstance(meta.get("issue"), int) else None,
+        merged_at=pull.merged_at,
     )
 
 

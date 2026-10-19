@@ -1,5 +1,5 @@
-"""What people do here, as operations on the catalog repository: ask, approve, decline, remove,
-mark a manual resource done, and expire what ran out.
+"""What people do here, as operations on the catalog repository: ask, approve, decline, withdraw,
+remove, mark a manual resource done, and expire what ran out.
 
 Every change starts from the catalog branch as it is at that moment. When a request is fully
 approved its branch is rebuilt on the latest catalog before merging, so two requests for the
@@ -105,6 +105,13 @@ class Portal:
     def sees_everyone(self, catalog: Catalog, actor: Actor) -> bool:
         return actor.admin or actor.auditor or self.is_lead(catalog, actor.upn)
 
+    def may_withdraw(self, catalog: Catalog, req: rq.Request, actor: Actor) -> bool:
+        """The requester, an admin, or a lead of a team whose roles the person holds."""
+        if actor.admin or actor.upn == req.requested_by:
+            return True
+        held = {g.role for g in catalog.people[req.person].grants if g.role} if req.person in catalog.people else set()
+        return any(actor.upn in team.leads and held & set(team.roles) for team in catalog.teams.values())
+
     def _repo(self) -> GitHub:
         if self.github is None:
             raise PortalError(400, "read_only", "This catalog is read-only here: requests need a catalog repository.")
@@ -136,20 +143,22 @@ class Portal:
             raise PortalError(404, "not_a_request", "That pull request is not an access request.")
         return found
 
-    async def requests(self, *, include_closed: bool = True) -> list[rq.Request]:
-        if self.github is None:
+    async def requests(self, *, closed: int = 40) -> list[rq.Request]:
+        """Open requests and the `closed` newest closed ones."""
+        github = self.github
+        if github is None:
             return []
         catalog = await self.catalog()
-        listed = await self.github.pulls(rq.LABEL, state="open")
-        if include_closed:
-            listed += await self.github.pulls(rq.LABEL, state="closed", limit=40)
+        listed = await github.pulls(rq.LABEL, state="open")
+        if closed:
+            listed += await github.pulls(rq.LABEL, state="closed", limit=closed)
         gate = asyncio.Semaphore(6)
 
-        async def one(number: int) -> rq.Request | None:
+        async def one(pull: PullRequest) -> rq.Request | None:
             async with gate:
-                return await self._parse(catalog, await self._repo().pull(number))
+                return await self._parse(catalog, PullRequest(**{**pull.__dict__, "comments": await github.comments(pull.number)}))
 
-        found = await asyncio.gather(*(one(p.number) for p in listed))
+        found = await asyncio.gather(*(one(p) for p in listed))
         return [r for r in found if r is not None]
 
     async def can_approve(self, catalog: Catalog, req: rq.Request, actor: Actor) -> bool:
@@ -254,13 +263,19 @@ class Portal:
         return await self.request(pull.number)
 
     async def _open(self, github: GitHub, branch: str, title: str, text: str, meta: dict[str, Any], labels: list[str]) -> PullRequest:
-        """Open the pull request, then sign its request record, which needs its number. A pull
-        request left without one would still carry the grant, so it is closed."""
+        """Open the pull request and an issue that tracks it, then sign its request record, which
+        needs its number. A pull request left without one would still carry the grant, so it is
+        closed, with its issue."""
         pull = await github.open_pull(branch, title, text, labels)
+        issue = 0
         try:
-            await github.set_body(pull.number, f"{text}\n\n{self._records.write('request', meta, pull.number)}")
+            issue = await github.open_issue(title, f"{meta['reason']}\n\nRequested by `{meta['requested_by']}` in {pull.url}.")
+            record = self._records.write("request", {**meta, "issue": issue}, pull.number)
+            await github.set_body(pull.number, f"{text}\n\nCloses #{issue}\n\n{record}")
         except GitHubError:
             await github.close(pull.number)
+            if issue:
+                await github.close_issue(issue)
             raise
         return pull
 
@@ -294,7 +309,6 @@ class Portal:
         return req
 
     async def decline(self, actor: Actor, number: int, reason: str) -> rq.Request:
-        github = self._repo()
         catalog = await self.catalog()
         req = await self.request(number)
         if req.state not in ("pending", "approved", "open"):
@@ -304,15 +318,35 @@ class Portal:
             all_needs = self.needs_of(catalog, req.kind, list(req.items)) or []
             if not await eligible_needs(catalog, self.directory, all_needs, actor.upn):
                 raise PortalError(403, "not_an_approver", "Only an approver, an admin or the requester closes a request.")
-        note = self._records.write("decline", {"upn": actor.upn, "name": actor.name, "reason": reason, "withdrawn": withdrawn, "at": rq.now()}, number)
-        verb = "Withdrawn" if withdrawn else "Declined"
-        await github.comment(number, f"{verb} by {actor.name or actor.upn} (`{actor.upn}`): {reason}\n\n{note}")
-        await github.close(number)
-        await github.label(number, ["access:declined"], ("access:pending", "access:approved"))
-        _log("request declined", number=number, by=actor.upn, withdrawn=withdrawn)
+        await self._close(req, actor, reason, withdrawn=withdrawn)
         if not withdrawn:
             await self._notifier.send(f"Access request #{number} was declined", {"For": req.person, "By": actor.upn, "Why": reason}, f"{self._origin}/#/requests/{number}")
         return await self.request(number)
+
+    async def withdraw(self, actor: Actor, number: int, reason: str) -> rq.Request:
+        catalog = await self.catalog()
+        req = await self.request(number)
+        if req.state not in ("pending", "approved", "open"):
+            raise PortalError(409, "not_open", f"Request #{number} is {req.state}.")
+        if not self.may_withdraw(catalog, req, actor):
+            raise PortalError(403, "not_allowed", "Only the requester, the person's team lead or an admin withdraws a request.")
+        await self._close(req, actor, reason, withdrawn=True)
+        return await self.request(number)
+
+    async def _close(self, req: rq.Request, actor: Actor, reason: str, *, withdrawn: bool) -> None:
+        """Close the pull request and its issue, saying why, and delete the request's branch."""
+        github = self._repo()
+        number = req.number
+        note = self._records.write("decline", {"upn": actor.upn, "name": actor.name, "reason": reason, "withdrawn": withdrawn, "at": rq.now()}, number)
+        said = f"{'Withdrawn' if withdrawn else 'Declined'} by {actor.name or actor.upn} (`{actor.upn}`): {reason}"
+        await github.comment(number, f"{said}\n\n{note}")
+        await github.close(number)
+        await github.label(number, ["access:declined"], ("access:pending", "access:approved"))
+        if req.issue:
+            await github.comment(req.issue, said)
+            await github.close_issue(req.issue)
+        await github.delete_branch((await github.pull(number, with_comments=False)).head)
+        _log("request declined", number=number, by=actor.upn, withdrawn=withdrawn)
 
     async def done(self, actor: Actor, number: int, resource: str) -> rq.Request:
         """A fulfiller set up a manual resource from a granted request."""

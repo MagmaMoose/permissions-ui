@@ -8,7 +8,7 @@ import { when } from "../format";
 export function RequestView({ number }: { number: number }) {
   const { catalog, notify } = useSession();
   const { data, error, reload } = useLoad(() => api.request(number), [number]);
-  const [declining, setDeclining] = useState(false);
+  const [closing, setClosing] = useState<"decline" | "withdraw" | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -17,7 +17,7 @@ export function RequestView({ number }: { number: number }) {
     try {
       const req = await run();
       notify(done(req));
-      setDeclining(false);
+      setClosing(null);
       reload();
     } catch (err) {
       notify(err instanceof ApiError ? err.message : String(err), "error");
@@ -27,7 +27,7 @@ export function RequestView({ number }: { number: number }) {
   }
 
   if (!data) return <Loading error={error} />;
-  const withdraw = data.can_decline && !data.can_approve;
+  const withdraw = closing === "withdraw";
   return (
     <>
       <div className="page-head">
@@ -52,20 +52,30 @@ export function RequestView({ number }: { number: number }) {
             </button>
           )}
           {data.can_decline && (
-            <button type="button" className="button small" disabled={busy} onClick={() => setDeclining(true)}>
-              {withdraw ? "Withdraw" : "Decline"}
+            <button type="button" className="button small" disabled={busy} onClick={() => setClosing("decline")}>
+              Decline
+            </button>
+          )}
+          {data.can_withdraw && (
+            <button type="button" className="button small" disabled={busy} onClick={() => setClosing("withdraw")}>
+              Withdraw
             </button>
           )}
           <a className="button small" href={data.url} target="_blank" rel="noreferrer">
             Pull request
           </a>
+          {data.issue_url && (
+            <a className="button small" href={data.issue_url} target="_blank" rel="noreferrer">
+              Issue
+            </a>
+          )}
         </div>
       </div>
 
       <blockquote className="reason">{data.reason}</blockquote>
-      {data.state === "declined" && (
+      {(data.state === "declined" || data.state === "withdrawn") && data.declined_by && (
         <p className="notice error">
-          Declined by {data.declined_by}: {data.decline_reason}
+          {data.state === "declined" ? "Declined" : "Withdrawn"} by {data.declined_by}: {data.decline_reason}
         </p>
       )}
 
@@ -116,13 +126,13 @@ export function RequestView({ number }: { number: number }) {
         </Section>
       )}
 
-      {declining && (
-        <Dialog title={withdraw ? "Withdraw the request" : "Decline the request"} onClose={() => setDeclining(false)}>
+      {closing && (
+        <Dialog title={withdraw ? "Withdraw the request" : "Decline the request"} onClose={() => setClosing(null)}>
           <form
             className="form"
             onSubmit={(e) => {
               e.preventDefault();
-              void act(() => api.decline(number, reason.trim()), () => (withdraw ? "Withdrawn." : "Declined."));
+              void act(() => (withdraw ? api.withdraw : api.decline)(number, reason.trim()), () => (withdraw ? "Withdrawn." : "Declined."));
             }}
           >
             <div className="field">
@@ -130,7 +140,7 @@ export function RequestView({ number }: { number: number }) {
               <textarea id="decline-reason" data-autofocus required minLength={3} value={reason} onChange={(e) => setReason(e.target.value)} />
             </div>
             <footer className="dialog-footer">
-              <button type="button" className="button" onClick={() => setDeclining(false)}>
+              <button type="button" className="button" onClick={() => setClosing(null)}>
                 Cancel
               </button>
               <button type="submit" className="button danger" disabled={busy || reason.trim().length < 3}>

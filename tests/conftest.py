@@ -193,6 +193,7 @@ class FakeGitHub:
     commits: dict[str, dict[str, Any]] = field(default_factory=dict)
     refs: dict[str, str] = field(default_factory=dict)
     pulls: dict[int, dict[str, Any]] = field(default_factory=dict)
+    issues: dict[int, dict[str, Any]] = field(default_factory=dict)
     comments: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     next_number: int = 100
     block_merge: bool = False
@@ -297,6 +298,17 @@ class FakeGitHub:
                 if p["head"] == m.group(1):
                     p["lag"] = self.lag
             return httpx.Response(200, json={})
+        if method == "DELETE" and (m := re.fullmatch(r"/git/refs/heads/(.+)", path)):
+            return httpx.Response(204) if self.refs.pop(m.group(1), None) else httpx.Response(422, json={"message": "Reference does not exist"})
+        if method == "POST" and path == "/issues":
+            n = self.next_number
+            self.next_number += 1
+            self.issues[n] = {"title": body["title"], "body": body["body"], "state": "open"}
+            self.comments[n] = []
+            return httpx.Response(201, json={"number": n})
+        if method == "PATCH" and (m := re.fullmatch(r"/issues/(\d+)", path)):
+            self.issues[int(m.group(1))].update(body)
+            return httpx.Response(200, json={})
         if method == "POST" and path == "/pulls":
             n = self.next_number
             self.next_number += 1
@@ -350,6 +362,9 @@ class FakeGitHub:
             self.commits[squashed] = {"tree": self.commits[head]["tree"], "parents": [self.refs["main"]], "message": body["commit_title"]}
             self.refs["main"] = squashed
             pull["merged"], pull["state"] = True, "closed"
+            # GitHub closes the issues a merged pull request's body names.
+            for closes in re.findall(r"Closes #(\d+)", pull["body"]):
+                self.issues[int(closes)]["state"] = "closed"
             return httpx.Response(200, json={"merged": True})
         return httpx.Response(404, json={"message": f"unhandled {method} {path}"})
 
