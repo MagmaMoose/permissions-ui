@@ -30,6 +30,11 @@ TIERS = ("standard", "elevated", "privileged")
 DEFAULT_APPROVALS = {"standard": 1, "elevated": 1, "privileged": 2}
 
 
+def admin_named(*names: str) -> bool:
+    """Admin access, by its name, needs as many approvals as privileged access whatever its tier."""
+    return any("admin" in name.lower() for name in names)
+
+
 class CatalogError(ValueError):
     """The catalog does not hold together; `problems` lists every reason, with its file."""
 
@@ -85,7 +90,8 @@ class Resource(_Model):
 
     @property
     def required_approvals(self) -> int:
-        return self.approvals or DEFAULT_APPROVALS[self.tier]
+        count = self.approvals or DEFAULT_APPROVALS[self.tier]
+        return max(count, DEFAULT_APPROVALS["privileged"]) if admin_named(self.id, self.name, self.target) else count
 
 
 class Role(_Model):

@@ -1,8 +1,9 @@
 import { api } from "../api";
-import { Section } from "../App";
+import { Section, useSession } from "../App";
 import { Loading, Person, useLoad } from "../components/ui";
 
 export function OverviewView() {
+  const { me } = useSession();
   const { data, error } = useLoad(() => api.overview(), []);
   if (!data) return <Loading error={error} />;
   const extra = data.drift.filter((d) => d.extra.length > 0);
@@ -13,6 +14,16 @@ export function OverviewView() {
       <div className="page-head">
         <h1>Overview</h1>
         <p className="muted">Who holds what, and what needs a look.</p>
+        {(me.admin || me.auditor) && !me.read_only && (
+          <div className="actions">
+            <a className="button small" href="/api/audit?format=csv" download>
+              Export requests (CSV)
+            </a>
+            <a className="button small" href="/api/audit?format=json" download>
+              JSON
+            </a>
+          </div>
+        )}
       </div>
       <div className="stats">
         <Stat label="People with access" value={data.people} href="#/people" />

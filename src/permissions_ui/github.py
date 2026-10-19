@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,6 +25,8 @@ import jwt
 
 PERMISSIONS = {"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"}
 _LEVELS = {"read": 1, "write": 2, "admin": 3}
+# An API path: the characters repository, branch and label names use, with no empty or ".." segment.
+_PATH = r"/[\w./:@+-]+"
 # For a few seconds after a force update GitHub still shows a pull request's old head and refuses to merge it (405).
 CATCH_UP_SECONDS = 3.0
 
@@ -162,6 +165,10 @@ class GitHub:
         return self._bot
 
     async def _call(self, method: str, path: str, *, json: Any = None, params: dict[str, Any] | None = None, ok: tuple[int, ...] = (200, 201)) -> Any:
+        if not re.fullmatch(_PATH, path):
+            raise GitHubError(f"refused an odd GitHub API path: {path[:80]!r}", status=400)
+        if "//" in path or ".." in path.split("/"):
+            raise GitHubError(f"refused an odd GitHub API path: {path[:80]!r}", status=400)
         headers = {"Authorization": await self._auth(), "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         try:
             response = await self._http.request(method, f"{self._api}{path}", headers=headers, json=json, params=params, timeout=20)
@@ -221,22 +228,29 @@ class GitHub:
         return PullRequest.parse(data)
 
     async def pulls(self, label: str, *, state: str = "open", limit: int = 100) -> list[PullRequest]:
-        """Requests by label, newest first. Issues and pull requests share this listing."""
-        data = await self._call("GET", f"/repos/{self.repo}/issues", params={"labels": label, "state": state, "per_page": min(limit, 100), "sort": "created"})
-        return [PullRequest.parse(i) for i in data if "pull_request" in i]
+        """Requests by label, newest first, without their comments or head. Issues and pull
+        requests share this listing."""
+        size = min(limit, 100)
+        found: list[PullRequest] = []
+        for page in range(1, -(-limit // size) + 1):
+            data = await self._call("GET", f"/repos/{self.repo}/issues", params={"labels": label, "state": state, "per_page": size, "page": page, "sort": "created"})
+            found += [PullRequest.parse(i) for i in data if "pull_request" in i]
+            if len(data) < size:
+                break
+        return found
 
     async def pull(self, number: int, *, with_comments: bool = True) -> PullRequest:
         pull = PullRequest.parse(await self._call("GET", f"/repos/{self.repo}/pulls/{number}"))
-        if not with_comments:
-            return pull
+        return PullRequest(**{**pull.__dict__, "comments": await self.comments(number)}) if with_comments else pull
+
+    async def comments(self, number: int) -> tuple[Comment, ...]:
         data: list[dict[str, Any]] = []
         for page in range(1, 11):  # 1,000 comments at most, so a flood of them cannot make one read endless
             batch = await self._call("GET", f"/repos/{self.repo}/issues/{number}/comments", params={"per_page": 100, "page": page})
             data += batch
             if len(batch) < 100:
                 break
-        comments = tuple(Comment(int(c["id"]), str((c.get("user") or {}).get("login") or ""), str(c.get("body") or ""), str(c.get("created_at") or "")) for c in data)
-        return PullRequest(**{**pull.__dict__, "comments": comments})
+        return tuple(Comment(int(c["id"]), str((c.get("user") or {}).get("login") or ""), str(c.get("body") or ""), str(c.get("created_at") or "")) for c in data)
 
     async def set_body(self, number: int, body: str) -> None:
         await self._call("PATCH", f"/repos/{self.repo}/pulls/{number}", json={"body": body})
@@ -269,3 +283,12 @@ class GitHub:
 
     async def close(self, number: int) -> None:
         await self._call("PATCH", f"/repos/{self.repo}/pulls/{number}", json={"state": "closed"})
+
+    async def open_issue(self, title: str, body: str) -> int:
+        return int((await self._call("POST", f"/repos/{self.repo}/issues", json={"title": title, "body": body}))["number"])
+
+    async def close_issue(self, number: int) -> None:
+        await self._call("PATCH", f"/repos/{self.repo}/issues/{number}", json={"state": "closed", "state_reason": "not_planned"})
+
+    async def delete_branch(self, branch: str) -> None:
+        await self._call("DELETE", f"/repos/{self.repo}/git/refs/heads/{branch}", ok=(204, 404, 422))

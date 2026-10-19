@@ -102,9 +102,13 @@ export type AccessRequest = {
   outstanding: { resource: string; approvers: string[]; count: number }[];
   declined_by: string;
   decline_reason: string;
+  declined_at: string;
+  merged_at: string | null;
+  issue_url: string;
   done: string[];
   can_approve: boolean;
   can_decline: boolean;
+  can_withdraw: boolean;
 };
 
 export type Task = { request: AccessRequest; resources: Resource[] };
@@ -168,6 +172,7 @@ export const api = {
   ask: (body: { person: string; items: Item[]; reason: string; expires?: string | null }) => request<AccessRequest>("POST", "/api/requests", body),
   approve: (n: number) => request<AccessRequest>("POST", `/api/requests/${n}/approve`),
   decline: (n: number, reason: string) => request<AccessRequest>("POST", `/api/requests/${n}/decline`, { reason }),
+  withdraw: (n: number, reason: string) => request<AccessRequest>("POST", `/api/requests/${n}/withdraw`, { reason }),
   done: (n: number, resource: string) => request<AccessRequest>("POST", `/api/requests/${n}/done`, { resource }),
   remove: (body: { person: string; items: Item[] | null; reason: string }) => request<AccessRequest>("POST", "/api/removals", body),
   tasks: () => request<{ tasks: Task[] }>("GET", "/api/tasks").then((r) => r.tasks),

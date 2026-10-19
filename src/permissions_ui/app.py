@@ -6,7 +6,9 @@ everyone else sees the catalog, their own access and the requests that involve t
 """
 
 import asyncio
+import csv
 import hmac
+import io
 import json
 import logging
 import re
@@ -15,7 +17,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import date
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlencode
 
 import httpx
@@ -35,7 +37,7 @@ from .notify import Notifier
 from .oidc import SignInError
 from .requests import Records
 from .requests import Request as AccessRequest
-from .service import Actor, LocalSource, Portal, PortalError
+from .service import SYSTEM, Actor, LocalSource, Portal, PortalError
 from .session import Cookies, Sealer, TokenCache
 
 log = logging.getLogger("permissions_ui")
@@ -160,7 +162,7 @@ def names_of(catalog: Catalog, upns: Iterable[str]) -> dict[str, str]:
     return {upn: p.name for upn in upns if (p := catalog.people.get(upn)) is not None and p.name}
 
 
-def request_json(catalog: Catalog, req: AccessRequest, *, can_approve: bool = False, can_decline: bool = False) -> dict[str, Any]:
+def request_json(catalog: Catalog, req: AccessRequest, *, can_approve: bool = False, can_decline: bool = False, can_withdraw: bool = False) -> dict[str, Any]:
     names = {}
     for item in req.items:
         if item.get("role"):
@@ -192,10 +194,62 @@ def request_json(catalog: Catalog, req: AccessRequest, *, can_approve: bool = Fa
         "outstanding": [{"resource": n.resource, "approvers": list(n.approvers), "count": n.count} for n in req.outstanding],
         "declined_by": req.declined_by,
         "decline_reason": req.decline_reason,
+        "declined_at": req.declined_at,
+        "merged_at": req.merged_at,
+        "issue_url": req.issue_url,
         "done": list(req.done),
         "can_approve": can_approve,
         "can_decline": can_decline,
+        "can_withdraw": can_withdraw,
     }
+
+
+AUDIT_COLUMNS = ("number", "kind", "person", "requested_by", "items", "reason", "requested_at", "expires", "outcome", "approvals", "closed_by", "closed_at", "close_reason", "merged_at", "pull_request", "issue")
+
+
+def audit_record(catalog: Catalog, req: AccessRequest) -> dict[str, Any]:
+    """A request as the audit export lists it, from the records this app signed."""
+    outcome = {"granted": "merged"}.get(req.state, req.state)
+    if req.state == "granted" and req.kind == "revoke" and req.requested_by == SYSTEM.upn:
+        outcome = "expired"
+    return {
+        "number": req.number,
+        "kind": req.kind,
+        "person": req.person,
+        "requested_by": req.requested_by,
+        "items": request_json(catalog, req)["items"],
+        "reason": req.reason,
+        "requested_at": req.created,
+        "expires": req.expires,
+        "outcome": outcome,
+        "approvals": [{"upn": a.upn, "name": a.name, "at": a.at} for a in req.approvals],
+        "closed_by": req.declined_by,
+        "closed_at": req.declined_at,
+        "close_reason": req.decline_reason,
+        "merged_at": req.merged_at,
+        "pull_request": req.url,
+        "issue": req.issue_url,
+    }
+
+
+def _cell(value: Any) -> str:
+    text = "" if value is None else str(value)
+    # A spreadsheet runs a cell that starts like a formula; a reason is anyone's text.
+    return f"'{text}" if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
+
+
+def audit_csv(records: list[dict[str, Any]]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(AUDIT_COLUMNS)
+    for r in records:
+        flat = {
+            **r,
+            "items": "; ".join(f"{i['name']} ({'role' if i.get('role') else 'resource'} {i.get('role') or i.get('resource')})" for i in r["items"]),
+            "approvals": "; ".join(f"{a['upn']} at {a['at']}" for a in r["approvals"]),
+        }
+        writer.writerow([_cell(flat[c]) for c in AUDIT_COLUMNS])
+    return out.getvalue()
 
 
 def _reader() -> str:
@@ -480,7 +534,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
         views = [insights.person_view(catalog, upn, today) for upn in people]
         drift = await insights.all_drift(catalog, directory, today)
         undocumented = await insights.undocumented(catalog, directory, cfg.group_prefixes)
-        open_requests = [r for r in await portal.requests(include_closed=False) if r.state in ("pending", "approved", "open")]
+        open_requests = [r for r in await portal.requests(closed=0) if r.state in ("pending", "approved", "open")]
         return {
             "people": len(people),
             "resources": {t: sum(1 for r in catalog.resources.values() if r.tier == t) for t in ("standard", "elevated", "privileged")},
@@ -579,8 +633,10 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
         involved = who.upn in (req.person, req.requested_by)
         if not (approve or involved or portal.sees_everyone(catalog, who)):
             return None
-        decline = req.state in ("pending", "approved", "open") and (who.admin or who.upn == req.requested_by or approve)
-        return request_json(catalog, req, can_approve=approve, can_decline=decline)
+        is_open = req.state in ("pending", "approved", "open")
+        decline = is_open and (who.admin or approve)
+        withdraw = is_open and portal.may_withdraw(catalog, req, who)
+        return request_json(catalog, req, can_approve=approve, can_decline=decline, can_withdraw=withdraw)
 
     @app.get("/api/requests")
     async def list_requests(data: Session) -> dict[str, Any]:
@@ -612,6 +668,11 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
         req = await portal.decline(actor(data), number, body.reason)
         return request_json(await portal.catalog(), req)
 
+    @app.post("/api/requests/{number}/withdraw")
+    async def withdraw(number: Number, body: Reason, data: Writable) -> dict[str, Any]:
+        req = await portal.withdraw(actor(data), number, body.reason)
+        return request_json(await portal.catalog(), req)
+
     @app.post("/api/requests/{number}/done")
     async def done(number: Number, body: Done, data: Writable) -> dict[str, Any]:
         req = await portal.done(actor(data), number, body.resource)
@@ -622,6 +683,21 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None, *
         items = [i.plain() for i in body.items] if body.items is not None else None
         req = await portal.remove(actor(data), person=body.person, items=items, reason=body.reason)
         return request_json(await portal.catalog(), req)
+
+    @app.get("/api/audit")
+    async def audit(data: Session, as_: Annotated[Literal["csv", "json"], Query(alias="format")] = "csv") -> Response:
+        who = actor(data)
+        if not (who.admin or who.auditor):
+            raise HTTPException(403, "not_allowed")
+        catalog = await portal.catalog()
+        # shortcut: the 1,000 newest closed requests; page by date once a catalog has more.
+        records = [audit_record(catalog, r) for r in await portal.requests(closed=1000)]
+        _log("audit exported", by=who.upn, requests=len(records))
+        name = f"access-requests-{portal.today().isoformat()}.{as_}"
+        disposition = {"Content-Disposition": f'attachment; filename="{name}"'}
+        if as_ == "json":
+            return JSONResponse({"requests": records}, headers=disposition)
+        return Response(audit_csv(records), media_type="text/csv; charset=utf-8", headers=disposition)
 
     @app.get("/api/tasks")
     async def tasks(data: Session) -> dict[str, Any]:

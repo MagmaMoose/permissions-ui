@@ -1,10 +1,12 @@
 import asyncio
+import csv
+import io
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 import yaml
-from conftest import BOT, EXAMPLE, TODAY, make_client, oid, sign_in, write_headers
+from conftest import BOT, EXAMPLE, REPO, TODAY, make_client, oid, sign_in, write_headers
 
 from permissions_ui.app import build_portal
 from permissions_ui.config import load_config
@@ -119,6 +121,18 @@ def test_ask_approve_and_the_grant_lands_on_main(client, world):
     assert "access:granted" in world.github.pulls[req["number"]]["labels"]
 
 
+def test_an_issue_tracks_each_request_and_its_merge_closes_it(client, world):
+    me = sign_in(client, world, "alan.turing@example.com")
+    req = ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="Read the dashboards").json()
+    ((number, issue),) = world.github.issues.items()
+    assert issue["title"] == "Grant Grafana, viewer to Alan Turing" and "Read the dashboards" in issue["body"] and req["url"] in issue["body"]
+    assert f"Closes #{number}" in world.github.pulls[req["number"]]["body"]
+    assert req["issue_url"] == f"https://github.test/{REPO}/issues/{number}"
+    lead = sign_in(client, world, "grace.hopper@example.com")
+    assert client.post(f"/api/requests/{req['number']}/approve", headers=write_headers(lead)).json()["state"] == "granted"
+    assert issue["state"] == "closed"
+
+
 def test_privileged_access_needs_two_approvers(client, world):
     me = sign_in(client, world, "alan.turing@example.com")
     req = ask(client, me, person=me["upn"], items=[{"resource": "k8s-prd-cluster-admin"}], reason="Incident 42").json()
@@ -174,6 +188,7 @@ def test_a_pull_request_whose_record_cannot_be_written_is_closed(client, world, 
     me = sign_in(client, world, "alan.turing@example.com")
     assert ask(client, me, person=me["upn"], items=[{"resource": "grafana-viewer"}], reason="dashboards").status_code == 502
     assert [p["state"] for p in world.github.pulls.values()] == ["closed"]
+    assert [i["state"] for i in world.github.issues.values()] == ["closed"]
 
 
 def test_someone_who_is_not_an_approver_cannot_approve(client, world):
@@ -202,7 +217,76 @@ def test_declining_closes_the_request(client, world):
     lead = sign_in(client, world, "grace.hopper@example.com")
     out = client.post(f"/api/requests/{req['number']}/decline", json={"reason": "Use the shared board"}, headers=write_headers(lead)).json()
     assert out["state"] == "declined" and out["decline_reason"] == "Use the shared board"
-    assert world.github.pulls[req["number"]]["state"] == "closed"
+    assert world.github.pulls[req["number"]]["state"] == "closed" and world.github.pulls[req["number"]]["head"] not in world.github.refs
+    ((number, issue),) = world.github.issues.items()
+    assert issue["state"] == "closed" and issue["state_reason"] == "not_planned"
+    assert world.github.comments[number][-1]["body"] == "Declined by Grace Hopper (`grace.hopper@example.com`): Use the shared board"
+
+
+def test_the_requester_the_persons_lead_or_an_admin_withdraws_a_request(client, world):
+    ada = sign_in(client, world, "ada.lovelace@example.com")
+    first = ask(client, ada, person=ada["upn"], items=[{"resource": "prd-release-approver"}], reason="Release week").json()
+    second = ask(client, ada, person=ada["upn"], items=[{"resource": "prd-release-approver"}], reason="Release week").json()
+    third = ask(client, ada, person=ada["upn"], items=[{"resource": "prd-release-approver"}], reason="Release week").json()
+    seen = client.get(f"/api/requests/{first['number']}").json()
+    assert seen["can_withdraw"] and not seen["can_decline"]
+
+    # Grace leads a team, but not one Ada is on.
+    other = sign_in(client, world, "grace.hopper@example.com")
+    assert not client.get(f"/api/requests/{first['number']}").json()["can_withdraw"]
+    assert client.post(f"/api/requests/{first['number']}/withdraw", json={"reason": "Not mine"}, headers=write_headers(other)).json()["error"] == "not_allowed"
+
+    lead = sign_in(client, world, "katherine.johnson@example.com")
+    out = client.post(f"/api/requests/{first['number']}/withdraw", json={"reason": "Release moved"}, headers=write_headers(lead)).json()
+    assert out["state"] == "withdrawn" and out["declined_by"] == "katherine.johnson@example.com"
+    pull, issue = world.github.pulls[first["number"]], int(out["issue_url"].rsplit("/", 1)[1])
+    assert pull["state"] == "closed" and pull["head"] not in world.github.refs and world.github.issues[issue]["state"] == "closed"
+    assert world.github.comments[issue][-1]["body"].startswith("Withdrawn by Katherine Johnson")
+    assert client.post(f"/api/requests/{first['number']}/withdraw", json={"reason": "Again"}, headers=write_headers(lead)).json()["error"] == "not_open"
+
+    ada = sign_in(client, world, "ada.lovelace@example.com")
+    assert client.post(f"/api/requests/{second['number']}/withdraw", json={"reason": "Not needed"}, headers=write_headers(ada)).json()["state"] == "withdrawn"
+    admin = sign_in(client, world, "alan.turing@example.com", roles=["Admin"])
+    assert client.post(f"/api/requests/{third['number']}/withdraw", json={"reason": "Ada left"}, headers=write_headers(admin)).json()["state"] == "withdrawn"
+    assert client.get("/api/overview").json()["pending"] == 0
+
+
+def test_auditors_export_every_request_the_app_signed(client, world, env):
+    alan = sign_in(client, world, "alan.turing@example.com")
+    granted = ask(client, alan, person=alan["upn"], items=[{"resource": "grafana-viewer"}], reason="=1+1 dashboards").json()
+    withdrawn = ask(client, alan, person=alan["upn"], items=[{"resource": "vpn"}], reason="Working from home").json()
+    client.post(f"/api/requests/{withdrawn['number']}/withdraw", json={"reason": "Back in the office"}, headers=write_headers(alan))
+    lead = sign_in(client, world, "grace.hopper@example.com")
+    client.post(f"/api/requests/{granted['number']}/approve", headers=write_headers(lead))
+    pending = ask(client, lead, person=lead["upn"], items=[{"resource": "github-payments"}], reason="Review payments code").json()
+    declined = ask(client, lead, person=lead["upn"], items=[{"resource": "payments-keyvault-acc"}], reason="Rotate a secret").json()
+    katherine = sign_in(client, world, "katherine.johnson@example.com")
+    client.post(f"/api/requests/{declined['number']}/decline", json={"reason": "Ask payments to rotate it"}, headers=write_headers(katherine))
+    unsigned = max(world.github.pulls) + 1
+    world.github.pulls[unsigned] = {**world.github.pulls[pending["number"]], "labels": {"access-request"}, "body": "no record here", "head": "chore/by-hand"}
+    world.github.comments[unsigned] = []
+
+    async def expire():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(world.handler)) as http:
+            return await build_portal(load_config(env), http, today=lambda: TODAY.replace(month=12)).expire()
+
+    (expired,) = asyncio.run(expire())
+
+    assert client.get("/api/audit").status_code == 403
+    sign_in(client, world, "auditor@example.com", roles=["Auditor"])
+    response = client.get("/api/audit")
+    assert response.headers["content-type"].startswith("text/csv") and "attachment" in response.headers["content-disposition"]
+    rows = {int(r["number"]): r for r in csv.DictReader(io.StringIO(response.text))}
+    assert set(rows) == {granted["number"], withdrawn["number"], pending["number"], declined["number"], expired}
+    assert {n: r["outcome"] for n, r in rows.items()} == {granted["number"]: "merged", withdrawn["number"]: "withdrawn", pending["number"]: "pending", declined["number"]: "declined", expired: "expired"}
+    row = rows[granted["number"]]
+    assert row["reason"] == "'=1+1 dashboards" and row["items"] == "Grafana, viewer (resource grafana-viewer)" and row["requested_by"] == "alan.turing@example.com"
+    assert row["approvals"].startswith("grace.hopper@example.com at ") and row["merged_at"] and row["issue"].startswith(f"https://github.test/{REPO}/issues/")
+    assert rows[declined["number"]]["closed_by"] == "katherine.johnson@example.com" and rows[declined["number"]]["close_reason"] == "Ask payments to rotate it"
+    assert rows[withdrawn["number"]]["closed_at"]
+
+    data = client.get("/api/audit", params={"format": "json"}).json()["requests"]
+    assert {r["number"] for r in data} == set(rows) and next(r for r in data if r["number"] == granted["number"])["reason"] == "=1+1 dashboards"
 
 
 def test_removing_access_merges_at_once(client, world):

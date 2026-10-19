@@ -53,3 +53,10 @@ def test_an_installation_without_a_permission_it_needs_is_refused(held, missing)
     with pytest.raises(GitHubError, match=f"installation on {REPO} lacks {missing}"):
         asyncio.run(github._auth())
     assert not any(c.url.path.endswith("/access_tokens") for c in calls)
+
+
+@pytest.mark.parametrize("path", ["/repos/example/access/../../user", "/repos/example/access/pulls/1?state=x", "//evil.example.com/x", "repos/example/access"])
+def test_a_path_that_could_leave_the_repository_is_never_sent(path):
+    github = GitHub(httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))), repo=REPO, token="t", api=GITHUB_API)
+    with pytest.raises(GitHubError, match="odd GitHub API path"):
+        asyncio.run(github._call("GET", path))

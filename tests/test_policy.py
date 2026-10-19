@@ -20,6 +20,16 @@ def test_a_resource_falls_back_to_its_owners_leads_and_privileged_needs_two():
     assert need.approvers == ("team:platform",) and need.count == 2
 
 
+def test_admin_access_needs_two_approvals_whatever_its_tier_says():
+    files = {str(p.relative_to(EXAMPLE)): p.read_text() for p in EXAMPLE.rglob("*.yaml")}
+    files["resources/grafana.yaml"] = "- {id: grafana-editor, name: Grafana editor, description: Edits dashboards., owner: platform, kind: entra-group, target: Grafana-Admins, approvals: 1}\n"
+    files["roles/dashboards.yaml"] = "- {id: dashboards, name: Dashboard ADMIN, description: Grafana for its admins., resources: [grafana-viewer]}\n"
+    catalog = load_catalog(files)
+    assert [n.count for n in needs(catalog, [{"resource": "grafana-editor"}])] == [2]
+    assert [n.count for n in needs(catalog, [{"role": "dashboards"}])] == [2]
+    assert [n.count for n in needs(catalog, [{"resource": "grafana-viewer"}])] == [1]
+
+
 def test_the_same_resource_twice_takes_the_stricter_need():
     found = {n.resource: n for n in needs(CATALOG, [{"role": "payments-developer"}, {"resource": "payments-keyvault-acc"}])}
     assert found["payments-keyvault-acc"].approvers == ("team:payments", "team:platform")

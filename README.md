@@ -9,10 +9,12 @@ Entra ID enforces it.
   is and who approves it, so no group is a mystery any more.
 - **Roles bundle what a job needs.** A team lead onboards someone with one request: everything
   the team gives a new member, approved by the asking itself.
-- **Approvals that hold up.** Each resource needs its own approver; privileged access needs two;
-  nobody approves their own request; access the catalog keeps apart cannot be combined.
-- **Git is the record.** Every request is a pull request, every approval a comment on it, and
-  the history of `grants/` says who had what, when and why. The server stores nothing.
+- **Approvals that hold up.** Each resource needs its own approver; privileged and admin access
+  need two; nobody approves their own request; access the catalog keeps apart cannot be combined.
+- **Git is the record.** Every request is a pull request with an issue that tracks it, every
+  approval a comment on it, and the history of `grants/` says who had what, when and why. The
+  server stores nothing. Admins and auditors export every request, with its approvals and
+  outcome, as CSV or JSON from the overview.
 - **At a glance**: who holds privileged access, access nobody granted (in the group, not in the
   catalog), grants not applied yet, groups no resource describes, and what expires soon.
 - **Expiry and removal**: grants can run out and are removed by a daily job; removing access
@@ -105,10 +107,10 @@ docker run --rm -v "$PWD/access:/catalog:ro" ghcr.io/magmamoose/permissions-ui:<
 
 | | Sees | Can |
 |---|---|---|
-| Everyone | the catalog, their own access, requests that involve them | ask for access, remove their own |
-| Team leads | everyone's access and every request | ask for someone else (it counts as their approval), onboard, remove access |
-| App role `Admin` | the same | also remove anyone's access, decline any request |
-| App role `Auditor` | the same | nothing more: read-only |
+| Everyone | the catalog, their own access, requests that involve them | ask for access, remove their own, withdraw what they asked for |
+| Team leads | everyone's access and every request | ask for someone else (it counts as their approval), onboard, remove access, withdraw a request for someone on their team |
+| App role `Admin` | the same | also remove anyone's access, decline or withdraw any request, export every request |
+| App role `Auditor` | the same | export every request; otherwise read-only |
 | Approvers | requests that wait for them | approve or decline |
 | Fulfillers | tasks for their manual resources | mark them done |
 
@@ -116,7 +118,9 @@ docker run --rm -v "$PWD/access:/catalog:ro" ghcr.io/magmamoose/permissions-ui:<
 
 - Each resource in a request needs approvals from its role's approvers when its role names some,
   else its own, else the leads of the team that owns it.
-- `privileged` resources need two approvals unless `approvals` says otherwise.
+- `privileged` resources need two approvals unless `approvals` says otherwise. A resource whose
+  id, name or target, or a role whose id or name, contains "admin" (any case) needs at least two,
+  whatever its tier or `approvals` say.
 - Nobody approves a request they made or one that gives them access. A lead asking for someone
   else counts as one approval, so an onboarding is one click; privileged access still waits for a
   second person.
@@ -124,6 +128,9 @@ docker run --rm -v "$PWD/access:/catalog:ro" ghcr.io/magmamoose/permissions-ui:<
 - A grant runs at most the shortest `max_days` among what it gives.
 - Removing access needs no approval and merges at once. Expired grants are removed by the daily
   `expire` job.
+- Each request opens an issue that its pull request closes when it merges (on the repository's
+  default branch). Declining or withdrawing closes both, says why on the issue, and deletes the
+  request's branch. Someone is on a team when they hold one of its roles.
 - Only records this app writes and signs count. A comment typed on the pull request approves
   nothing, and neither does one another tool writes as the same GitHub App.
 
