@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,6 +25,8 @@ import jwt
 
 PERMISSIONS = {"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"}
 _LEVELS = {"read": 1, "write": 2, "admin": 3}
+# An API path: segments of the characters repository, branch and label names use, never "..".
+_PATH = r"(?:/(?!\.\.(?:/|$))[\w.:@+-]+)+"
 # For a few seconds after a force update GitHub still shows a pull request's old head and refuses to merge it (405).
 CATCH_UP_SECONDS = 3.0
 
@@ -162,6 +165,8 @@ class GitHub:
         return self._bot
 
     async def _call(self, method: str, path: str, *, json: Any = None, params: dict[str, Any] | None = None, ok: tuple[int, ...] = (200, 201)) -> Any:
+        if not re.fullmatch(_PATH, path):
+            raise GitHubError(f"refused an odd GitHub API path: {path[:80]!r}", status=400)
         headers = {"Authorization": await self._auth(), "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         try:
             response = await self._http.request(method, f"{self._api}{path}", headers=headers, json=json, params=params, timeout=20)
