@@ -2,7 +2,8 @@
 
 Each resource in a request needs its own approvals: its role's approvers when it comes in a
 role that names some, else the resource's, else the leads of the team that owns it. A
-privileged resource needs two approvals unless the catalog says otherwise. Nobody approves a
+privileged resource needs two approvals unless the catalog says otherwise, and so does any
+resource or role named for admin access, whatever the catalog says. Nobody approves a
 request they made or one that gives them access, and an approval by someone who could approve
 several of the resources counts for each of them.
 """
@@ -13,7 +14,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from .catalog import Catalog, Resource
+from .catalog import DEFAULT_APPROVALS, Catalog, Resource, admin_named
 from .directory import Directory
 
 
@@ -34,7 +35,10 @@ def needs(catalog: Catalog, items: Iterable[Mapping[str, str]]) -> list[Need]:
         for rid in ids:
             resource = catalog.resources[rid]
             specs = tuple(role.approvers) if role and role.approvers else tuple(resource.approvers) or (f"team:{resource.owner}",)
-            need = Need(rid, specs, resource.required_approvals)
+            count = resource.required_approvals
+            if role and admin_named(role.id, role.name):
+                count = max(count, DEFAULT_APPROVALS["privileged"])
+            need = Need(rid, specs, count)
             # The same resource through a role and directly: the stricter count, both lists.
             if rid in found:
                 old = found[rid]
